@@ -536,10 +536,12 @@ class BusinessManager {
         tbody.innerHTML = data.map(item => {
             switch (type) {
                 case 'sales':
+                    const inventoryIcon = item.inventory_item_id ? 
+                        `<i class="fas fa-boxes" title="This sale affected inventory" style="color: #667eea; margin-left: 5px;"></i>` : '';
                     return `
                         <tr>
                             <td>${this.formatDate(item.date)}</td>
-                            <td>${item.item}</td>
+                            <td>${item.item}${inventoryIcon}</td>
                             <td>${item.quantity}</td>
                             <td>${this.formatCurrency(item.price)}</td>
                             <td>${this.formatCurrency(item.total)}</td>
@@ -685,13 +687,17 @@ class BusinessManager {
     async deleteItem(type, id) {
         if (confirm('Are you sure you want to delete this item?')) {
             try {
-                await this.apiRequest(`/${type}/${id}`, { method: 'DELETE' });
+                const result = await this.apiRequest(`/${type}/${id}`, { method: 'DELETE' });
                 
                 // Reload data
                 switch (type) {
                     case 'sales':
                         this.sales = await this.apiRequest('/sales?limit=all');
                         this.renderSalesTable();
+                        // Also reload inventory to reflect any stock restoration
+                        this.inventory = await this.apiRequest('/inventory');
+                        this.renderInventoryTable();
+                        this.populateInventoryDropdown();
                         break;
                     case 'expenses':
                         this.expenses = await this.apiRequest('/expenses');
@@ -705,7 +711,13 @@ class BusinessManager {
                 }
                 
                 this.updateDashboard();
-                this.showNotification('Item deleted successfully!', 'success');
+                
+                // Show enhanced notification for sales deletion
+                if (type === 'sales' && result.inventoryRestored) {
+                    this.showNotification(`Sale deleted successfully! Stock restored: ${result.restoredQuantity} units`, 'success');
+                } else {
+                    this.showNotification('Item deleted successfully!', 'success');
+                }
             } catch (error) {
                 console.error('Failed to delete item:', error);
                 this.showNotification('Failed to delete item', 'danger');

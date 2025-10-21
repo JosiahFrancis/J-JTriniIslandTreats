@@ -33,8 +33,11 @@ function initializeDatabase() {
             quantity INTEGER NOT NULL,
             price REAL NOT NULL,
             total REAL NOT NULL,
+            inventory_item_id INTEGER,
+            inventory_quantity INTEGER,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (inventory_item_id) REFERENCES inventory (id)
         )`);
 
         // Expenses table
@@ -68,6 +71,14 @@ function initializeDatabase() {
             value TEXT NOT NULL,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`);
+
+        // Add new columns to sales table if they don't exist (for existing databases)
+        db.run(`ALTER TABLE sales ADD COLUMN inventory_item_id INTEGER`, (err) => {
+            // Ignore error if column already exists
+        });
+        db.run(`ALTER TABLE sales ADD COLUMN inventory_quantity INTEGER`, (err) => {
+            // Ignore error if column already exists
+        });
     });
 }
 
@@ -126,8 +137,8 @@ app.post('/api/sales', (req, res) => {
 
         // Insert the sale
         db.run(
-            'INSERT INTO sales (date, item, quantity, price, total) VALUES (?, ?, ?, ?, ?)',
-            [date, item, quantity, price, finalTotal],
+            'INSERT INTO sales (date, item, quantity, price, total, inventory_item_id, inventory_quantity) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [date, item, quantity, price, finalTotal, inventoryItemId || null, inventoryItemId ? quantity : null],
             function(err) {
                 if (err) {
                     db.run('ROLLBACK');
@@ -211,16 +222,84 @@ app.post('/api/sales', (req, res) => {
 
 app.delete('/api/sales/:id', (req, res) => {
     const id = req.params.id;
-    db.run('DELETE FROM sales WHERE id = ?', [id], function(err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        if (this.changes === 0) {
-            res.status(404).json({ error: 'Sale not found' });
-            return;
-        }
-        res.json({ message: 'Sale deleted successfully' });
+    
+    // Start a transaction to handle both sale deletion and inventory restoration
+    db.serialize(() => {
+        db.run('BEGIN TRANSACTION');
+
+        // First, get the sale details to check if it affected inventory
+        db.get('SELECT inventory_item_id, inventory_quantity FROM sales WHERE id = ?', [id], (err, sale) => {
+            if (err) {
+                db.run('ROLLBACK');
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            
+            if (!sale) {
+                db.run('ROLLBACK');
+                res.status(404).json({ error: 'Sale not found' });
+                return;
+            }
+
+            // If this sale affected inventory, restore the stock
+            if (sale.inventory_item_id && sale.inventory_quantity) {
+                db.run(
+                    'UPDATE inventory SET current_stock = current_stock + ?, total_value = current_stock * unit_cost, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                    [sale.inventory_quantity, sale.inventory_item_id],
+                    function(err) {
+                        if (err) {
+                            db.run('ROLLBACK');
+                            res.status(500).json({ error: err.message });
+                            return;
+                        }
+
+                        // Now delete the sale
+                        db.run('DELETE FROM sales WHERE id = ?', [id], function(err) {
+                            if (err) {
+                                db.run('ROLLBACK');
+                                res.status(500).json({ error: err.message });
+                                return;
+                            }
+
+                            // Commit the transaction
+                            db.run('COMMIT', (err) => {
+                                if (err) {
+                                    res.status(500).json({ error: err.message });
+                                    return;
+                                }
+                                res.json({ 
+                                    message: 'Sale deleted successfully and inventory restored',
+                                    inventoryRestored: true,
+                                    restoredQuantity: sale.inventory_quantity,
+                                    inventoryItemId: sale.inventory_item_id
+                                });
+                            });
+                        });
+                    }
+                );
+            } else {
+                // No inventory to restore, just delete the sale
+                db.run('DELETE FROM sales WHERE id = ?', [id], function(err) {
+                    if (err) {
+                        db.run('ROLLBACK');
+                        res.status(500).json({ error: err.message });
+                        return;
+                    }
+
+                    // Commit the transaction
+                    db.run('COMMIT', (err) => {
+                        if (err) {
+                            res.status(500).json({ error: err.message });
+                            return;
+                        }
+                        res.json({ 
+                            message: 'Sale deleted successfully',
+                            inventoryRestored: false
+                        });
+                    });
+                });
+            }
+        });
     });
 });
 
