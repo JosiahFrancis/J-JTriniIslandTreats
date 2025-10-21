@@ -186,10 +186,11 @@
                     </thead>
                     <tbody id="expensesTableBody">
                         <tr class="no-data-row">
-                            <td colspan="5">No expenses recorded yet</td>
+                            <td colspan="6">No expenses recorded yet</td>
                         </tr>
                     </tbody>
                 </table>
+                <div id="expensesPagination" style="display:flex; gap:8px; justify-content:flex-end; padding:10px;"></div>
             </div>
         </div>
 
@@ -261,6 +262,16 @@
                 <div class="form-group">
                     <label for="saleItem">Item:</label>
                     <input type="text" id="saleItem" placeholder="e.g., Snow Ice Cup" required>
+                </div>
+                <div class="form-group">
+                    <label for="saleInventoryItem">Update Inventory (Optional):</label>
+                    <select id="saleInventoryItem">
+                        <option value="">No inventory update</option>
+                    </select>
+                    <small class="form-help">Select an inventory item to automatically reduce stock when this sale is recorded</small>
+                    <div id="inventorySummary" class="inventory-summary" style="margin-top: 10px; padding: 10px; background: #f7fafc; border-radius: 6px; font-size: 12px; color: #4a5568;">
+                        <!-- Dynamic inventory summary will be populated here -->
+                    </div>
                 </div>
                 <div class="form-group">
                     <label for="saleQuantity">Quantity:</label>

@@ -116,21 +116,97 @@ app.get('/api/sales', (req, res) => {
 });
 
 app.post('/api/sales', (req, res) => {
-    const { date, item, quantity, price, total } = req.body;
+    const { date, item, quantity, price, total, inventoryItemId } = req.body;
     const calculatedTotal = quantity * price;
     const finalTotal = total || calculatedTotal;
 
-    db.run(
-        'INSERT INTO sales (date, item, quantity, price, total) VALUES (?, ?, ?, ?, ?)',
-        [date, item, quantity, price, finalTotal],
-        function(err) {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
+    // Start a transaction
+    db.serialize(() => {
+        db.run('BEGIN TRANSACTION');
+
+        // Insert the sale
+        db.run(
+            'INSERT INTO sales (date, item, quantity, price, total) VALUES (?, ?, ?, ?, ?)',
+            [date, item, quantity, price, finalTotal],
+            function(err) {
+                if (err) {
+                    db.run('ROLLBACK');
+                    res.status(500).json({ error: err.message });
+                    return;
+                }
+
+                const saleId = this.lastID;
+
+                // If inventoryItemId is provided, update inventory stock
+                if (inventoryItemId) {
+                    // First check if the inventory item exists and has enough stock
+                    db.get('SELECT current_stock FROM inventory WHERE id = ?', [inventoryItemId], (err, row) => {
+                        if (err) {
+                            db.run('ROLLBACK');
+                            res.status(500).json({ error: err.message });
+                            return;
+                        }
+                        if (!row) {
+                            db.run('ROLLBACK');
+                            res.status(404).json({ error: 'Inventory item not found' });
+                            return;
+                        }
+
+                        const currentStock = row.current_stock;
+                        const newStock = currentStock - quantity;
+
+                        if (newStock < 0) {
+                            db.run('ROLLBACK');
+                            res.status(400).json({ 
+                                error: `Insufficient stock for ${item}. Available: ${currentStock}, Requested: ${quantity}` 
+                            });
+                            return;
+                        }
+
+                        // Update inventory stock
+                        db.run(
+                            'UPDATE inventory SET current_stock = ?, total_value = current_stock * unit_cost, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                            [newStock, inventoryItemId],
+                            function(err) {
+                                if (err) {
+                                    db.run('ROLLBACK');
+                                    res.status(500).json({ error: err.message });
+                                    return;
+                                }
+
+                                // Commit the transaction
+                                db.run('COMMIT', (err) => {
+                                    if (err) {
+                                        res.status(500).json({ error: err.message });
+                                        return;
+                                    }
+                                    res.json({ 
+                                        id: saleId, 
+                                        message: 'Sale added successfully and inventory updated',
+                                        inventoryUpdated: true,
+                                        newStock: newStock
+                                    });
+                                });
+                            }
+                        );
+                    });
+                } else {
+                    // No inventory update needed, just commit
+                    db.run('COMMIT', (err) => {
+                        if (err) {
+                            res.status(500).json({ error: err.message });
+                            return;
+                        }
+                        res.json({ 
+                            id: saleId, 
+                            message: 'Sale added successfully',
+                            inventoryUpdated: false
+                        });
+                    });
+                }
             }
-            res.json({ id: this.lastID, message: 'Sale added successfully' });
-        }
-    );
+        );
+    });
 });
 
 app.delete('/api/sales/:id', (req, res) => {
@@ -278,6 +354,63 @@ app.delete('/api/inventory/:id', (req, res) => {
             return;
         }
         res.json({ message: 'Inventory item deleted successfully' });
+    });
+});
+
+// Update inventory stock
+app.put('/api/inventory/:id/stock', (req, res) => {
+    const id = req.params.id;
+    const { quantity, operation = 'subtract' } = req.body; // operation can be 'subtract' or 'add'
+    
+    if (!quantity || quantity <= 0) {
+        res.status(400).json({ error: 'Invalid quantity' });
+        return;
+    }
+
+    // First get current stock
+    db.get('SELECT current_stock FROM inventory WHERE id = ?', [id], (err, row) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        if (!row) {
+            res.status(404).json({ error: 'Inventory item not found' });
+            return;
+        }
+
+        const currentStock = row.current_stock;
+        let newStock;
+        
+        if (operation === 'subtract') {
+            newStock = currentStock - quantity;
+            if (newStock < 0) {
+                res.status(400).json({ error: 'Insufficient stock. Available: ' + currentStock });
+                return;
+            }
+        } else if (operation === 'add') {
+            newStock = currentStock + quantity;
+        } else {
+            res.status(400).json({ error: 'Invalid operation. Use "add" or "subtract"' });
+            return;
+        }
+
+        // Update the stock
+        db.run(
+            'UPDATE inventory SET current_stock = ?, total_value = current_stock * unit_cost, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [newStock, id],
+            function(err) {
+                if (err) {
+                    res.status(500).json({ error: err.message });
+                    return;
+                }
+                res.json({ 
+                    message: 'Stock updated successfully',
+                    newStock: newStock,
+                    operation: operation,
+                    quantity: quantity
+                });
+            }
+        );
     });
 });
 

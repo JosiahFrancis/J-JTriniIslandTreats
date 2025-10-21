@@ -62,6 +62,14 @@ class BusinessManager {
             this.openModal('bankBalanceModal');
         });
 
+        // Update inventory dropdown when sales modal is opened
+        document.getElementById('salesModal').addEventListener('click', (e) => {
+            if (e.target.id === 'salesModal' || e.target.classList.contains('close')) {
+                // Modal is being closed, refresh inventory dropdown for next time
+                this.populateInventoryDropdown();
+            }
+        });
+
         // Backup & Restore inputs
         const importAllInput = document.getElementById('importAllJsonInput');
         if (importAllInput) {
@@ -127,6 +135,14 @@ class BusinessManager {
         document.getElementById('inventorySearch').addEventListener('input', () => {
             this.filterInventory();
         });
+
+        // Update inventory summary when dropdown changes
+        const inventoryDropdown = document.getElementById('saleInventoryItem');
+        if (inventoryDropdown) {
+            inventoryDropdown.addEventListener('change', () => {
+                this.updateInventorySummary();
+            });
+        }
     }
 
     setDefaultDates() {
@@ -183,6 +199,9 @@ class BusinessManager {
             const balanceData = await this.apiRequest('/settings/bankBalance');
             this.bankBalance = balanceData.value ? parseFloat(balanceData.value) : 0;
 
+            // Populate inventory dropdown for sales
+            this.populateInventoryDropdown();
+
         } catch (error) {
             console.error('Failed to load data:', error);
             this.showNotification('Failed to load data from server', 'danger');
@@ -192,6 +211,7 @@ class BusinessManager {
     // Sales Management
     async addSale() {
         try {
+            const inventoryItemId = document.getElementById('saleInventoryItem').value;
             const saleData = {
                 date: document.getElementById('saleDate').value,
                 item: document.getElementById('saleItem').value,
@@ -199,23 +219,38 @@ class BusinessManager {
                 price: parseFloat(document.getElementById('salePrice').value)
             };
 
+            // Add inventory item ID if selected
+            if (inventoryItemId) {
+                saleData.inventoryItemId = parseInt(inventoryItemId);
+            }
+
             const result = await this.apiRequest('/sales', {
                 method: 'POST',
                 body: JSON.stringify(saleData)
             });
 
-            // Reload sales data
+            // Reload sales and inventory data
             this.sales = await this.apiRequest('/sales?limit=all');
+            this.inventory = await this.apiRequest('/inventory');
+            
+            // Update inventory dropdown
+            this.populateInventoryDropdown();
+            
             this.updateDashboard();
             this.salesPage = 1;
             this.salesFiltered = null;
             this.renderSalesTable();
+            this.renderInventoryTable();
             this.closeModal('salesModal');
             this.clearForm('salesForm');
-            this.showNotification('Sale added successfully!', 'success');
+            
+            const message = result.inventoryUpdated ? 
+                `Sale added successfully! Inventory updated. New stock: ${result.newStock}` : 
+                'Sale added successfully!';
+            this.showNotification(message, 'success');
         } catch (error) {
             console.error('Failed to add sale:', error);
-            this.showNotification('Failed to add sale', 'danger');
+            this.showNotification(error.message || 'Failed to add sale', 'danger');
         }
     }
 
@@ -267,6 +302,7 @@ class BusinessManager {
             // Reload inventory data
             this.inventory = await this.apiRequest('/inventory');
             this.renderInventoryTable();
+            this.populateInventoryDropdown(); // Update the sales dropdown
             this.closeModal('inventoryModal');
             this.clearForm('inventoryForm');
             this.showNotification('Inventory item added successfully!', 'success');
@@ -531,9 +567,11 @@ class BusinessManager {
                     `;
                 case 'inventory':
                     const stockStatus = item.current_stock <= item.min_stock ? 'text-danger' : 'text-success';
+                    const stockWarning = item.current_stock <= item.min_stock ? 
+                        `<i class="fas fa-exclamation-triangle" title="Low stock warning!"></i>` : '';
                     return `
                         <tr>
-                            <td>${item.name}</td>
+                            <td>${item.name} ${stockWarning}</td>
                             <td>${this.capitalizeFirst(item.category)}</td>
                             <td class="${stockStatus}">${item.current_stock}</td>
                             <td>${item.min_stock}</td>
@@ -662,6 +700,7 @@ class BusinessManager {
                     case 'inventory':
                         this.inventory = await this.apiRequest('/inventory');
                         this.renderInventoryTable();
+                        this.populateInventoryDropdown(); // Update the sales dropdown
                         break;
                 }
                 
@@ -989,6 +1028,95 @@ class BusinessManager {
         this.setDefaultDates();
     }
 
+    populateInventoryDropdown() {
+        const dropdown = document.getElementById('saleInventoryItem');
+        if (!dropdown) return;
+
+        // Clear existing options except the first one
+        dropdown.innerHTML = '<option value="">No inventory update</option>';
+
+        // Filter and sort inventory items
+        const availableItems = this.inventory
+            .filter(item => item.current_stock > 0) // Only show items with stock
+            .sort((a, b) => {
+                // Sort by stock level (lowest first) then by name
+                if (a.current_stock <= a.min_stock && b.current_stock > b.min_stock) return -1;
+                if (a.current_stock > a.min_stock && b.current_stock <= b.min_stock) return 1;
+                return a.name.localeCompare(b.name);
+            });
+
+        // Add inventory items with enhanced display
+        availableItems.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.id;
+            
+            // Create visual indicators for stock status
+            let stockIndicator = '';
+            let stockColor = '';
+            
+            if (item.current_stock <= item.min_stock) {
+                stockIndicator = ' 🔴 LOW STOCK';
+                stockColor = 'color: #e53e3e;';
+            } else if (item.current_stock <= item.min_stock * 2) {
+                stockIndicator = ' 🟡 MEDIUM STOCK';
+                stockColor = 'color: #d69e2e;';
+            } else {
+                stockIndicator = ' 🟢 GOOD STOCK';
+                stockColor = 'color: #38a169;';
+            }
+            
+            option.textContent = `${item.name} (${item.current_stock} units)${stockIndicator}`;
+            option.style.cssText = stockColor;
+            dropdown.appendChild(option);
+        });
+
+        // Add a separator and out-of-stock items (disabled)
+        if (availableItems.length > 0) {
+            const separator = document.createElement('option');
+            separator.disabled = true;
+            separator.textContent = '───────────────';
+            dropdown.appendChild(separator);
+        }
+
+        // Show out-of-stock items as disabled options
+        const outOfStockItems = this.inventory.filter(item => item.current_stock === 0);
+        if (outOfStockItems.length > 0) {
+            outOfStockItems.forEach(item => {
+                const option = document.createElement('option');
+                option.value = '';
+                option.disabled = true;
+                option.textContent = `${item.name} (OUT OF STOCK)`;
+                option.style.cssText = 'color: #a0aec0; font-style: italic;';
+                dropdown.appendChild(option);
+            });
+        }
+
+        // Update the inventory summary
+        this.updateInventorySummary();
+    }
+
+    updateInventorySummary() {
+        const summaryDiv = document.getElementById('inventorySummary');
+        if (!summaryDiv) return;
+
+        const availableItems = this.inventory.filter(item => item.current_stock > 0);
+        const lowStockItems = this.inventory.filter(item => item.current_stock > 0 && item.current_stock <= item.min_stock);
+        const outOfStockItems = this.inventory.filter(item => item.current_stock === 0);
+
+        let summaryHTML = `<strong>📦 Inventory Summary:</strong><br>`;
+        summaryHTML += `✅ ${availableItems.length} items available<br>`;
+        
+        if (lowStockItems.length > 0) {
+            summaryHTML += `⚠️ ${lowStockItems.length} items low on stock<br>`;
+        }
+        
+        if (outOfStockItems.length > 0) {
+            summaryHTML += `❌ ${outOfStockItems.length} items out of stock<br>`;
+        }
+
+        summaryDiv.innerHTML = summaryHTML;
+    }
+
     showNotification(message, type = 'info') {
         const notification = document.createElement('div');
         notification.className = `notification notification-${type}`;
@@ -1024,6 +1152,11 @@ class BusinessManager {
     openModal(modalId) {
         document.getElementById(modalId).style.display = 'block';
         document.body.style.overflow = 'hidden';
+        
+        // Refresh inventory dropdown when sales modal is opened
+        if (modalId === 'salesModal') {
+            this.populateInventoryDropdown();
+        }
     }
 
     closeModal(modalId) {
