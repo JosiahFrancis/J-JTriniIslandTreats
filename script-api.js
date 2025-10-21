@@ -239,6 +239,10 @@ class BusinessManager {
             this.sales = await this.apiRequest('/sales?limit=all');
             this.inventory = await this.apiRequest('/inventory');
             
+            // Reload bank balance
+            const balanceData = await this.apiRequest('/settings/bankBalance');
+            this.bankBalance = balanceData.value ? parseFloat(balanceData.value) : 0;
+            
             // Update inventory dropdown
             this.populateInventoryDropdown();
             
@@ -250,9 +254,13 @@ class BusinessManager {
             this.closeModal('salesModal');
             this.clearForm('salesForm');
             
-            const message = result.inventoryUpdated ? 
-                `Sale added successfully! Inventory updated. New stock: ${result.newStock}` : 
-                'Sale added successfully!';
+            let message = 'Sale added successfully!';
+            if (result.inventoryUpdated) {
+                message += ` Inventory updated. New stock: ${result.newStock}`;
+            }
+            if (result.bankBalanceUpdated) {
+                message += ` Bank balance updated to ${this.formatCurrency(result.newBalance)}`;
+            }
             this.showNotification(message, 'success');
         } catch (error) {
             console.error('Failed to add sale:', error);
@@ -276,13 +284,20 @@ class BusinessManager {
                 body: JSON.stringify(expenseData)
             });
 
-            // Reload expenses data
+            // Reload expenses data and bank balance
             this.expenses = await this.apiRequest('/expenses');
+            const balanceData = await this.apiRequest('/settings/bankBalance');
+            this.bankBalance = balanceData.value ? parseFloat(balanceData.value) : 0;
             this.updateDashboard();
             this.renderExpensesTable();
             this.closeModal('expensesModal');
             this.clearForm('expensesForm');
-            this.showNotification('Expense added successfully!', 'success');
+            
+            let message = 'Expense added successfully!';
+            if (result.bankBalanceUpdated) {
+                message += ` Bank balance updated to ${this.formatCurrency(result.newBalance)}`;
+            }
+            this.showNotification(message, 'success');
         } catch (error) {
             console.error('Failed to add expense:', error);
             this.showNotification('Failed to add expense', 'danger');
@@ -739,10 +754,16 @@ class BusinessManager {
                         this.inventory = await this.apiRequest('/inventory');
                         this.renderInventoryTable();
                         this.populateInventoryDropdown();
+                        // Reload bank balance
+                        const salesBalanceData = await this.apiRequest('/settings/bankBalance');
+                        this.bankBalance = salesBalanceData.value ? parseFloat(salesBalanceData.value) : 0;
                         break;
                     case 'expenses':
                         this.expenses = await this.apiRequest('/expenses');
                         this.renderExpensesTable();
+                        // Reload bank balance
+                        const expensesBalanceData = await this.apiRequest('/settings/bankBalance');
+                        this.bankBalance = expensesBalanceData.value ? parseFloat(expensesBalanceData.value) : 0;
                         break;
                     case 'inventory':
                         this.inventory = await this.apiRequest('/inventory');
@@ -753,12 +774,19 @@ class BusinessManager {
                 
                 this.updateDashboard();
                 
-                // Show enhanced notification for sales deletion
-                if (type === 'sales' && result.inventoryRestored) {
-                    this.showNotification(`Sale deleted successfully! Stock restored: ${result.restoredQuantity} units`, 'success');
-                } else {
-                    this.showNotification('Item deleted successfully!', 'success');
+                // Show enhanced notification for deletions
+                let message = 'Item deleted successfully!';
+                if (type === 'sales') {
+                    if (result.inventoryRestored) {
+                        message += ` Stock restored: ${result.restoredQuantity} units`;
+                    }
+                    if (result.bankBalanceUpdated) {
+                        message += ` Bank balance updated to ${this.formatCurrency(result.newBalance)}`;
+                    }
+                } else if (type === 'expenses' && result.bankBalanceUpdated) {
+                    message += ` Bank balance restored to ${this.formatCurrency(result.newBalance)} (restored: ${this.formatCurrency(result.restoredAmount)})`;
                 }
+                this.showNotification(message, 'success');
             } catch (error) {
                 console.error('Failed to delete item:', error);
                 this.showNotification('Failed to delete item', 'danger');

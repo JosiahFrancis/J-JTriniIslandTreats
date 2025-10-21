@@ -154,37 +154,91 @@ app.post('/api/sales', (req, res) => {
 
                 const saleId = this.lastID;
 
-                // If inventoryItemId is provided, update inventory stock
-                if (inventoryItemId) {
-                    // First check if the inventory item exists and has enough stock
-                    db.get('SELECT current_stock FROM inventory WHERE id = ?', [inventoryItemId], (err, row) => {
-                        if (err) {
-                            db.run('ROLLBACK');
-                            res.status(500).json({ error: err.message });
-                            return;
-                        }
-                        if (!row) {
-                            db.run('ROLLBACK');
-                            res.status(404).json({ error: 'Inventory item not found' });
-                            return;
-                        }
+                // Get current bank balance first
+                db.get('SELECT value FROM settings WHERE key = ?', ['bankBalance'], (err, balanceRow) => {
+                    if (err) {
+                        db.run('ROLLBACK');
+                        res.status(500).json({ error: err.message });
+                        return;
+                    }
 
-                        const currentStock = row.current_stock;
-                        const newStock = currentStock - quantity;
+                    const currentBalance = parseFloat(balanceRow?.value || 0);
+                    const newBalance = currentBalance + finalTotal;
 
-                        if (newStock < 0) {
-                            db.run('ROLLBACK');
-                            res.status(400).json({ 
-                                error: `Insufficient stock for ${item}. Available: ${currentStock}, Requested: ${quantity}` 
-                            });
-                            return;
-                        }
+                    // If inventoryItemId is provided, update inventory stock
+                    if (inventoryItemId) {
+                        // First check if the inventory item exists and has enough stock
+                        db.get('SELECT current_stock FROM inventory WHERE id = ?', [inventoryItemId], (err, row) => {
+                            if (err) {
+                                db.run('ROLLBACK');
+                                res.status(500).json({ error: err.message });
+                                return;
+                            }
+                            if (!row) {
+                                db.run('ROLLBACK');
+                                res.status(404).json({ error: 'Inventory item not found' });
+                                return;
+                            }
 
-                        // Update inventory stock
+                            const currentStock = row.current_stock;
+                            const newStock = currentStock - quantity;
+
+                            if (newStock < 0) {
+                                db.run('ROLLBACK');
+                                res.status(400).json({ 
+                                    error: `Insufficient stock for ${item}. Available: ${currentStock}, Requested: ${quantity}` 
+                                });
+                                return;
+                            }
+
+                            // Update inventory stock
+                            db.run(
+                                'UPDATE inventory SET current_stock = ?, total_value = current_stock * unit_cost, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                                [newStock, inventoryItemId],
+                                function(err) {
+                                    if (err) {
+                                        db.run('ROLLBACK');
+                                        res.status(500).json({ error: err.message });
+                                        return;
+                                    }
+
+                                    // Update bank balance
+                                    db.run(
+                                        'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+                                        ['bankBalance', newBalance.toString()],
+                                        (err) => {
+                                            if (err) {
+                                                db.run('ROLLBACK');
+                                                res.status(500).json({ error: err.message });
+                                                return;
+                                            }
+
+                                            // Commit the transaction
+                                            db.run('COMMIT', (err) => {
+                                                if (err) {
+                                                    res.status(500).json({ error: err.message });
+                                                    return;
+                                                }
+                                                res.json({ 
+                                                    id: saleId, 
+                                                    message: 'Sale added successfully and inventory updated',
+                                                    inventoryUpdated: true,
+                                                    newStock: newStock,
+                                                    bankBalanceUpdated: true,
+                                                    newBalance: newBalance
+                                                });
+                                            });
+                                        }
+                                    );
+                                }
+                            );
+                        });
+                    } else {
+                        // No inventory update needed, just update bank balance
                         db.run(
-                            'UPDATE inventory SET current_stock = ?, total_value = current_stock * unit_cost, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                            [newStock, inventoryItemId],
-                            function(err) {
+                            'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+                            ['bankBalance', newBalance.toString()],
+                            (err) => {
                                 if (err) {
                                     db.run('ROLLBACK');
                                     res.status(500).json({ error: err.message });
@@ -199,28 +253,16 @@ app.post('/api/sales', (req, res) => {
                                     }
                                     res.json({ 
                                         id: saleId, 
-                                        message: 'Sale added successfully and inventory updated',
-                                        inventoryUpdated: true,
-                                        newStock: newStock
+                                        message: 'Sale added successfully',
+                                        inventoryUpdated: false,
+                                        bankBalanceUpdated: true,
+                                        newBalance: newBalance
                                     });
                                 });
                             }
                         );
-                    });
-                } else {
-                    // No inventory update needed, just commit
-                    db.run('COMMIT', (err) => {
-                        if (err) {
-                            res.status(500).json({ error: err.message });
-                            return;
-                        }
-                        res.json({ 
-                            id: saleId, 
-                            message: 'Sale added successfully',
-                            inventoryUpdated: false
-                        });
-                    });
-                }
+                    }
+                });
             }
         );
     });
@@ -233,8 +275,8 @@ app.delete('/api/sales/:id', (req, res) => {
     db.serialize(() => {
         db.run('BEGIN TRANSACTION');
 
-        // First, get the sale details to check if it affected inventory
-        db.get('SELECT inventory_item_id, inventory_quantity FROM sales WHERE id = ?', [id], (err, sale) => {
+        // First, get the sale details to check if it affected inventory and get the sale amount
+        db.get('SELECT inventory_item_id, inventory_quantity, total FROM sales WHERE id = ?', [id], (err, sale) => {
             if (err) {
                 db.run('ROLLBACK');
                 res.status(500).json({ error: err.message });
@@ -247,64 +289,106 @@ app.delete('/api/sales/:id', (req, res) => {
                 return;
             }
 
-            // If this sale affected inventory, restore the stock
-            if (sale.inventory_item_id && sale.inventory_quantity) {
-                db.run(
-                    'UPDATE inventory SET current_stock = current_stock + ?, total_value = current_stock * unit_cost, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                    [sale.inventory_quantity, sale.inventory_item_id],
-                    function(err) {
-                        if (err) {
-                            db.run('ROLLBACK');
-                            res.status(500).json({ error: err.message });
-                            return;
-                        }
+            // Get current bank balance to restore the sale amount
+            db.get('SELECT value FROM settings WHERE key = ?', ['bankBalance'], (err, balanceRow) => {
+                if (err) {
+                    db.run('ROLLBACK');
+                    res.status(500).json({ error: err.message });
+                    return;
+                }
 
-                        // Now delete the sale
-                        db.run('DELETE FROM sales WHERE id = ?', [id], function(err) {
+                const currentBalance = parseFloat(balanceRow?.value || 0);
+                const newBalance = currentBalance - sale.total; // Subtract the sale amount from balance
+
+                // If this sale affected inventory, restore the stock
+                if (sale.inventory_item_id && sale.inventory_quantity) {
+                    db.run(
+                        'UPDATE inventory SET current_stock = current_stock + ?, total_value = current_stock * unit_cost, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                        [sale.inventory_quantity, sale.inventory_item_id],
+                        function(err) {
                             if (err) {
                                 db.run('ROLLBACK');
                                 res.status(500).json({ error: err.message });
                                 return;
                             }
 
-                            // Commit the transaction
-                            db.run('COMMIT', (err) => {
+                            // Update bank balance
+                            db.run(
+                                'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+                                ['bankBalance', newBalance.toString()],
+                                (err) => {
+                                    if (err) {
+                                        db.run('ROLLBACK');
+                                        res.status(500).json({ error: err.message });
+                                        return;
+                                    }
+
+                                    // Now delete the sale
+                                    db.run('DELETE FROM sales WHERE id = ?', [id], function(err) {
+                                        if (err) {
+                                            db.run('ROLLBACK');
+                                            res.status(500).json({ error: err.message });
+                                            return;
+                                        }
+
+                                        // Commit the transaction
+                                        db.run('COMMIT', (err) => {
+                                            if (err) {
+                                                res.status(500).json({ error: err.message });
+                                                return;
+                                            }
+                                            res.json({ 
+                                                message: 'Sale deleted successfully, inventory restored, and bank balance updated',
+                                                inventoryRestored: true,
+                                                restoredQuantity: sale.inventory_quantity,
+                                                inventoryItemId: sale.inventory_item_id,
+                                                bankBalanceUpdated: true,
+                                                newBalance: newBalance
+                                            });
+                                        });
+                                    });
+                                }
+                            );
+                        }
+                    );
+                } else {
+                    // No inventory to restore, just update bank balance and delete the sale
+                    db.run(
+                        'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+                        ['bankBalance', newBalance.toString()],
+                        (err) => {
+                            if (err) {
+                                db.run('ROLLBACK');
+                                res.status(500).json({ error: err.message });
+                                return;
+                            }
+
+                            // Delete the sale
+                            db.run('DELETE FROM sales WHERE id = ?', [id], function(err) {
                                 if (err) {
+                                    db.run('ROLLBACK');
                                     res.status(500).json({ error: err.message });
                                     return;
                                 }
-                                res.json({ 
-                                    message: 'Sale deleted successfully and inventory restored',
-                                    inventoryRestored: true,
-                                    restoredQuantity: sale.inventory_quantity,
-                                    inventoryItemId: sale.inventory_item_id
+
+                                // Commit the transaction
+                                db.run('COMMIT', (err) => {
+                                    if (err) {
+                                        res.status(500).json({ error: err.message });
+                                        return;
+                                    }
+                                    res.json({ 
+                                        message: 'Sale deleted successfully and bank balance updated',
+                                        inventoryRestored: false,
+                                        bankBalanceUpdated: true,
+                                        newBalance: newBalance
+                                    });
                                 });
                             });
-                        });
-                    }
-                );
-            } else {
-                // No inventory to restore, just delete the sale
-                db.run('DELETE FROM sales WHERE id = ?', [id], function(err) {
-                    if (err) {
-                        db.run('ROLLBACK');
-                        res.status(500).json({ error: err.message });
-                        return;
-                    }
-
-                    // Commit the transaction
-                    db.run('COMMIT', (err) => {
-                        if (err) {
-                            res.status(500).json({ error: err.message });
-                            return;
                         }
-                        res.json({ 
-                            message: 'Sale deleted successfully',
-                            inventoryRestored: false
-                        });
-                    });
-                });
-            }
+                    );
+                }
+            });
         });
     });
 });
@@ -349,31 +433,135 @@ app.get('/api/expenses', (req, res) => {
 app.post('/api/expenses', (req, res) => {
     const { date, category, storeVendor, description, amount } = req.body;
     
-    db.run(
-        'INSERT INTO expenses (date, category, store_vendor, description, amount) VALUES (?, ?, ?, ?, ?)',
-        [date, category, storeVendor, description, amount],
-        function(err) {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
+    // Start a transaction to handle both expense creation and bank balance update
+    db.serialize(() => {
+        db.run('BEGIN TRANSACTION');
+
+        // Insert the expense
+        db.run(
+            'INSERT INTO expenses (date, category, store_vendor, description, amount) VALUES (?, ?, ?, ?, ?)',
+            [date, category, storeVendor, description, amount],
+            function(err) {
+                if (err) {
+                    db.run('ROLLBACK');
+                    res.status(500).json({ error: err.message });
+                    return;
+                }
+
+                const expenseId = this.lastID;
+
+                // Get current bank balance and update it
+                db.get('SELECT value FROM settings WHERE key = ?', ['bankBalance'], (err, balanceRow) => {
+                    if (err) {
+                        db.run('ROLLBACK');
+                        res.status(500).json({ error: err.message });
+                        return;
+                    }
+
+                    const currentBalance = parseFloat(balanceRow?.value || 0);
+                    const newBalance = currentBalance - amount;
+
+                    // Update bank balance
+                    db.run(
+                        'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+                        ['bankBalance', newBalance.toString()],
+                        (err) => {
+                            if (err) {
+                                db.run('ROLLBACK');
+                                res.status(500).json({ error: err.message });
+                                return;
+                            }
+
+                            // Commit the transaction
+                            db.run('COMMIT', (err) => {
+                                if (err) {
+                                    res.status(500).json({ error: err.message });
+                                    return;
+                                }
+                                res.json({ 
+                                    id: expenseId, 
+                                    message: 'Expense added successfully',
+                                    bankBalanceUpdated: true,
+                                    newBalance: newBalance
+                                });
+                            });
+                        }
+                    );
+                });
             }
-            res.json({ id: this.lastID, message: 'Expense added successfully' });
-        }
-    );
+        );
+    });
 });
 
 app.delete('/api/expenses/:id', (req, res) => {
     const id = req.params.id;
-    db.run('DELETE FROM expenses WHERE id = ?', [id], function(err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        if (this.changes === 0) {
-            res.status(404).json({ error: 'Expense not found' });
-            return;
-        }
-        res.json({ message: 'Expense deleted successfully' });
+    
+    // Start a transaction to handle both expense deletion and bank balance restoration
+    db.serialize(() => {
+        db.run('BEGIN TRANSACTION');
+
+        // First, get the expense details to restore the amount to bank balance
+        db.get('SELECT amount FROM expenses WHERE id = ?', [id], (err, expense) => {
+            if (err) {
+                db.run('ROLLBACK');
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            
+            if (!expense) {
+                db.run('ROLLBACK');
+                res.status(404).json({ error: 'Expense not found' });
+                return;
+            }
+
+            // Get current bank balance and restore the expense amount
+            db.get('SELECT value FROM settings WHERE key = ?', ['bankBalance'], (err, balanceRow) => {
+                if (err) {
+                    db.run('ROLLBACK');
+                    res.status(500).json({ error: err.message });
+                    return;
+                }
+
+                const currentBalance = parseFloat(balanceRow?.value || 0);
+                const newBalance = currentBalance + expense.amount; // Add the expense amount back to balance
+
+                // Update bank balance
+                db.run(
+                    'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+                    ['bankBalance', newBalance.toString()],
+                    (err) => {
+                        if (err) {
+                            db.run('ROLLBACK');
+                            res.status(500).json({ error: err.message });
+                            return;
+                        }
+
+                        // Now delete the expense
+                        db.run('DELETE FROM expenses WHERE id = ?', [id], function(err) {
+                            if (err) {
+                                db.run('ROLLBACK');
+                                res.status(500).json({ error: err.message });
+                                return;
+                            }
+
+                            // Commit the transaction
+                            db.run('COMMIT', (err) => {
+                                if (err) {
+                                    res.status(500).json({ error: err.message });
+                                    return;
+                                }
+                                res.json({ 
+                                    message: 'Expense deleted successfully and bank balance restored',
+                                    bankBalanceUpdated: true,
+                                    newBalance: newBalance,
+                                    restoredAmount: expense.amount
+                                });
+                            });
+                        });
+                    }
+                );
+            });
+        });
     });
 });
 
