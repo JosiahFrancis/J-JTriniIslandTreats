@@ -61,6 +61,7 @@ function initializeDatabase() {
             min_stock INTEGER NOT NULL,
             unit_cost REAL NOT NULL,
             total_value REAL NOT NULL,
+            stock_date TEXT NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`);
@@ -77,6 +78,11 @@ function initializeDatabase() {
             // Ignore error if column already exists
         });
         db.run(`ALTER TABLE sales ADD COLUMN inventory_quantity INTEGER`, (err) => {
+            // Ignore error if column already exists
+        });
+        
+        // Add stock_date column to inventory table if it doesn't exist
+        db.run(`ALTER TABLE inventory ADD COLUMN stock_date TEXT`, (err) => {
             // Ignore error if column already exists
         });
     });
@@ -404,13 +410,14 @@ app.get('/api/inventory', (req, res) => {
 });
 
 app.post('/api/inventory', (req, res) => {
-    const { name, category, currentStock, minStock, unitCost, totalValue } = req.body;
+    const { name, category, currentStock, minStock, unitCost, totalValue, stockDate } = req.body;
     const calculatedTotal = currentStock * unitCost;
     const finalTotal = totalValue || calculatedTotal;
+    const finalStockDate = stockDate || new Date().toISOString().split('T')[0]; // Default to today if not provided
 
     db.run(
-        'INSERT INTO inventory (name, category, current_stock, min_stock, unit_cost, total_value) VALUES (?, ?, ?, ?, ?, ?)',
-        [name, category, currentStock, minStock, unitCost, finalTotal],
+        'INSERT INTO inventory (name, category, current_stock, min_stock, unit_cost, total_value, stock_date) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [name, category, currentStock, minStock, unitCost, finalTotal, finalStockDate],
         function(err) {
             if (err) {
                 res.status(500).json({ error: err.message });
@@ -434,6 +441,47 @@ app.delete('/api/inventory/:id', (req, res) => {
         }
         res.json({ message: 'Inventory item deleted successfully' });
     });
+});
+
+// Update inventory item
+app.put('/api/inventory/:id', (req, res) => {
+    const id = req.params.id;
+    const { name, category, currentStock, minStock, unitCost, stockDate } = req.body;
+    
+    if (!name || !category || currentStock === undefined || minStock === undefined || !unitCost) {
+        res.status(400).json({ error: 'Missing required fields' });
+        return;
+    }
+
+    const totalValue = currentStock * unitCost;
+
+    db.run(
+        'UPDATE inventory SET name = ?, category = ?, current_stock = ?, min_stock = ?, unit_cost = ?, total_value = ?, stock_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [name, category, currentStock, minStock, unitCost, totalValue, stockDate, id],
+        function(err) {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            if (this.changes === 0) {
+                res.status(404).json({ error: 'Inventory item not found' });
+                return;
+            }
+            res.json({ 
+                message: 'Inventory item updated successfully',
+                updatedItem: {
+                    id: id,
+                    name: name,
+                    category: category,
+                    currentStock: currentStock,
+                    minStock: minStock,
+                    unitCost: unitCost,
+                    totalValue: totalValue,
+                    stockDate: stockDate
+                }
+            });
+        }
+    );
 });
 
 // Update inventory stock

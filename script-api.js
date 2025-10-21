@@ -49,6 +49,11 @@ class BusinessManager {
             this.addInventoryItem();
         });
 
+        document.getElementById('editInventoryForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.updateInventoryItem();
+        });
+
         document.getElementById('bankBalanceForm').addEventListener('submit', (e) => {
             e.preventDefault();
             this.updateBankBalance();
@@ -149,6 +154,7 @@ class BusinessManager {
         const today = new Date().toISOString().split('T')[0];
         document.getElementById('saleDate').value = today;
         document.getElementById('expenseDate').value = today;
+        document.getElementById('inventoryStockDate').value = today;
     }
 
     switchTab(tabName) {
@@ -291,7 +297,8 @@ class BusinessManager {
                 category: document.getElementById('inventoryCategory').value,
                 currentStock: parseInt(document.getElementById('inventoryStock').value),
                 minStock: parseInt(document.getElementById('inventoryMinStock').value),
-                unitCost: parseFloat(document.getElementById('inventoryUnitCost').value)
+                unitCost: parseFloat(document.getElementById('inventoryUnitCost').value),
+                stockDate: document.getElementById('inventoryStockDate').value
             };
 
             const result = await this.apiRequest('/inventory', {
@@ -309,6 +316,36 @@ class BusinessManager {
         } catch (error) {
             console.error('Failed to add inventory item:', error);
             this.showNotification('Failed to add inventory item', 'danger');
+        }
+    }
+
+    async updateInventoryItem() {
+        try {
+            const inventoryData = {
+                name: document.getElementById('editInventoryName').value,
+                category: document.getElementById('editInventoryCategory').value,
+                currentStock: parseInt(document.getElementById('editInventoryStock').value),
+                minStock: parseInt(document.getElementById('editInventoryMinStock').value),
+                unitCost: parseFloat(document.getElementById('editInventoryUnitCost').value),
+                stockDate: document.getElementById('editInventoryStockDate').value
+            };
+
+            const itemId = document.getElementById('editInventoryId').value;
+
+            const result = await this.apiRequest(`/inventory/${itemId}`, {
+                method: 'PUT',
+                body: JSON.stringify(inventoryData)
+            });
+
+            // Reload inventory data
+            this.inventory = await this.apiRequest('/inventory');
+            this.renderInventoryTable();
+            this.populateInventoryDropdown(); // Update the sales dropdown
+            this.closeModal('editInventoryModal');
+            this.showNotification('Inventory item updated successfully!', 'success');
+        } catch (error) {
+            console.error('Failed to update inventory item:', error);
+            this.showNotification('Failed to update inventory item', 'danger');
         }
     }
 
@@ -575,11 +612,15 @@ class BusinessManager {
                         <tr>
                             <td>${item.name} ${stockWarning}</td>
                             <td>${this.capitalizeFirst(item.category)}</td>
+                            <td>${this.formatDate(item.stock_date || item.created_at)}</td>
                             <td class="${stockStatus}">${item.current_stock}</td>
                             <td>${item.min_stock}</td>
                             <td>${this.formatCurrency(item.unit_cost)}</td>
                             <td>${this.formatCurrency(item.total_value)}</td>
                             <td>
+                                <button class="btn btn-primary btn-small" onclick="businessManager.openEditInventoryModal(${JSON.stringify(item).replace(/"/g, '&quot;')})" style="margin-right: 5px;">
+                                    <i class="fas fa-edit"></i>
+                                </button>
                                 <button class="btn btn-danger btn-small" onclick="businessManager.deleteItem('inventory', ${item.id})">
                                     <i class="fas fa-trash"></i>
                                 </button>
@@ -594,7 +635,7 @@ class BusinessManager {
         switch (type) {
             case 'sales': return 6;
             case 'expenses': return 6;
-            case 'inventory': return 7;
+            case 'inventory': return 8;
             default: return 5;
         }
     }
@@ -1038,6 +1079,20 @@ class BusinessManager {
     clearForm(formId) {
         document.getElementById(formId).reset();
         this.setDefaultDates();
+    }
+
+    openEditInventoryModal(item) {
+        // Populate the edit form with item data
+        document.getElementById('editInventoryId').value = item.id;
+        document.getElementById('editInventoryName').value = item.name;
+        document.getElementById('editInventoryCategory').value = item.category;
+        document.getElementById('editInventoryStock').value = item.current_stock;
+        document.getElementById('editInventoryMinStock').value = item.min_stock;
+        document.getElementById('editInventoryUnitCost').value = item.unit_cost;
+        document.getElementById('editInventoryStockDate').value = item.stock_date || new Date().toISOString().split('T')[0];
+        
+        // Open the modal
+        this.openModal('editInventoryModal');
     }
 
     populateInventoryDropdown() {
