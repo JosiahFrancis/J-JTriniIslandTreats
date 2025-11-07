@@ -186,10 +186,11 @@
                     </thead>
                     <tbody id="expensesTableBody">
                         <tr class="no-data-row">
-                            <td colspan="5">No expenses recorded yet</td>
+                            <td colspan="6">No expenses recorded yet</td>
                         </tr>
                     </tbody>
                 </table>
+                <div id="expensesPagination" style="display:flex; gap:8px; justify-content:flex-end; padding:10px;"></div>
             </div>
         </div>
 
@@ -217,6 +218,7 @@
                     <option value="syrups">Syrups</option>
                     <option value="toppings">Toppings</option>
                     <option value="cups">Cups & Containers</option>
+                    <option value="snow ice">Snow Ice</option>
                     <option value="equipment">Equipment</option>
                     <option value="other">Other</option>
                 </select>
@@ -229,6 +231,7 @@
                         <tr>
                             <th>Item Name</th>
                             <th>Category</th>
+                            <th>Stock Date</th>
                             <th>Current Stock</th>
                             <th>Min Stock</th>
                             <th>Unit Cost</th>
@@ -238,7 +241,7 @@
                     </thead>
                     <tbody id="inventoryTableBody">
                         <tr class="no-data-row">
-                            <td colspan="7">No inventory items yet</td>
+                            <td colspan="8">No inventory items yet</td>
                         </tr>
                     </tbody>
                 </table>
@@ -261,6 +264,16 @@
                 <div class="form-group">
                     <label for="saleItem">Item:</label>
                     <input type="text" id="saleItem" placeholder="e.g., Snow Ice Cup" required>
+                </div>
+                <div class="form-group">
+                    <label for="saleInventoryItem">Update Inventory (Optional):</label>
+                    <select id="saleInventoryItem">
+                        <option value="">No inventory update</option>
+                    </select>
+                    <small class="form-help">Select an inventory item to automatically reduce stock when this sale is recorded</small>
+                    <div id="inventorySummary" class="inventory-summary" style="margin-top: 10px; padding: 10px; background: #f7fafc; border-radius: 6px; font-size: 12px; color: #4a5568;">
+                        <!-- Dynamic inventory summary will be populated here -->
+                    </div>
                 </div>
                 <div class="form-group">
                     <label for="saleQuantity">Quantity:</label>
@@ -342,9 +355,14 @@
                         <option value="syrups">Syrups</option>
                         <option value="toppings">Toppings</option>
                         <option value="cups">Cups & Containers</option>
+                        <option value="snow ice">Snow Ice</option>
                         <option value="equipment">Equipment</option>
                         <option value="other">Other</option>
                     </select>
+                </div>
+                <div class="form-group">
+                    <label for="inventoryStockDate">Stock Date:</label>
+                    <input type="date" id="inventoryStockDate" required>
                 </div>
                 <div class="form-group">
                     <label for="inventoryStock">Current Stock:</label>
@@ -386,6 +404,55 @@
         </div>
     </div>
 
-    <script src="script.js"></script>
+    <!-- Edit Inventory Modal -->
+    <div id="editInventoryModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Edit Inventory Item</h3>
+                <span class="close" onclick="closeModal('editInventoryModal')">&times;</span>
+            </div>
+            <form id="editInventoryForm">
+                <input type="hidden" id="editInventoryId">
+                <div class="form-group">
+                    <label for="editInventoryName">Item Name:</label>
+                    <input type="text" id="editInventoryName" required>
+                </div>
+                <div class="form-group">
+                    <label for="editInventoryCategory">Category:</label>
+                    <select id="editInventoryCategory" required>
+                        <option value="">Select Category</option>
+                        <option value="syrups">Syrups</option>
+                        <option value="toppings">Toppings</option>
+                        <option value="cups">Cups & Containers</option>
+                        <option value="snow ice">Snow Ice</option>
+                        <option value="equipment">Equipment</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="editInventoryStockDate">Stock Date:</label>
+                    <input type="date" id="editInventoryStockDate" required>
+                </div>
+                <div class="form-group">
+                    <label for="editInventoryStock">Current Stock:</label>
+                    <input type="number" id="editInventoryStock" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="editInventoryMinStock">Minimum Stock:</label>
+                    <input type="number" id="editInventoryMinStock" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="editInventoryUnitCost">Unit Cost:</label>
+                    <input type="number" id="editInventoryUnitCost" step="0.01" min="0" required>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('editInventoryModal')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Update Item</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="script-api.js"></script>
 </body>
 </html>

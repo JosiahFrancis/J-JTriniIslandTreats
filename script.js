@@ -12,6 +12,11 @@ class BusinessManager {
         this.salesPageSize = 10;
         this.salesFiltered = null; // null = use full list
 
+        // Expenses pagination state
+        this.expensesPage = 1;
+        this.expensesPageSize = 10;
+        this.expensesFiltered = null; // null = use full list
+
         this.init();
     }
 
@@ -147,7 +152,7 @@ class BusinessManager {
     addSale() {
         const sale = {
             id: Date.now(),
-            date: document.getElementById('saleDate').value,
+            date: this.formatDateForStorage(document.getElementById('saleDate').value),
             item: document.getElementById('saleItem').value,
             quantity: parseInt(document.getElementById('saleQuantity').value),
             price: parseFloat(document.getElementById('salePrice').value),
@@ -169,7 +174,7 @@ class BusinessManager {
     addExpense() {
         const expense = {
             id: Date.now(),
-            date: document.getElementById('expenseDate').value,
+            date: this.formatDateForStorage(document.getElementById('expenseDate').value),
             category: document.getElementById('expenseCategory').value,
             storeVendor: document.getElementById('expenseStoreVendor').value,
             description: document.getElementById('expenseDescription').value,
@@ -179,6 +184,8 @@ class BusinessManager {
         this.expenses.push(expense);
         this.saveData('expenses', this.expenses);
         this.updateDashboard();
+        this.expensesPage = 1; // show newest
+        this.expensesFiltered = null;
         this.renderExpensesTable();
         this.closeModal('expensesModal');
         this.clearForm('expensesForm');
@@ -274,50 +281,101 @@ class BusinessManager {
 
     updateRecentActivity() {
         const recentActivity = document.getElementById('recentActivity');
+        if (!recentActivity) {
+            console.warn('Recent activity element not found');
+            return;
+        }
+        
         const allActivities = [];
 
-        // Add recent sales
-        this.sales.slice(-5).forEach(sale => {
-            allActivities.push({
-                type: 'sale',
-                description: `Sold ${sale.quantity}x ${sale.item}`,
-                amount: sale.total,
-                date: sale.date,
-                icon: 'fas fa-dollar-sign',
-                color: 'text-success'
-            });
-        });
+        // Ensure sales and expenses are arrays
+        const sales = Array.isArray(this.sales) ? this.sales : [];
+        const expenses = Array.isArray(this.expenses) ? this.expenses : [];
 
-        // Add recent expenses
-        this.expenses.slice(-5).forEach(expense => {
-            allActivities.push({
-                type: 'expense',
-                description: `${expense.category}: ${expense.description}`,
-                amount: -expense.amount,
-                date: expense.date,
-                icon: 'fas fa-receipt',
-                color: 'text-danger'
+        // Add recent sales (get last 10, not just 5, to ensure we have enough after sorting)
+        if (sales.length > 0) {
+            sales.slice(-10).forEach(sale => {
+                if (!sale || !sale.date) return; // Skip invalid entries
+                try {
+                    const dateObj = this.parseLocalDate(sale.date);
+                    if (isNaN(dateObj.getTime())) return; // Skip invalid dates
+                    
+                    allActivities.push({
+                        type: 'sale',
+                        description: `Sold ${sale.quantity || 0}x ${sale.item || 'Unknown'}`,
+                        amount: sale.total || 0,
+                        date: sale.date,
+                        dateObj: dateObj,
+                        id: sale.id || 0,
+                        icon: 'fas fa-dollar-sign',
+                        color: 'text-success'
+                    });
+                } catch (e) {
+                    console.warn('Error processing sale:', sale, e);
+                }
             });
-        });
+        }
 
-        // Sort by date (most recent first)
-        allActivities.sort((a, b) => new Date(b.date) - new Date(a.date));
+        // Add recent expenses (get last 10, not just 5, to ensure we have enough after sorting)
+        if (expenses.length > 0) {
+            expenses.slice(-10).forEach(expense => {
+                if (!expense || !expense.date) return; // Skip invalid entries
+                try {
+                    const dateObj = this.parseLocalDate(expense.date);
+                    if (isNaN(dateObj.getTime())) return; // Skip invalid dates
+                    
+                    allActivities.push({
+                        type: 'expense',
+                        description: `${this.capitalizeFirst(expense.category || 'other')}: ${expense.description || 'No description'}`,
+                        amount: -(expense.amount || 0),
+                        date: expense.date,
+                        dateObj: dateObj,
+                        id: expense.id || 0,
+                        icon: 'fas fa-receipt',
+                        color: 'text-danger'
+                    });
+                } catch (e) {
+                    console.warn('Error processing expense:', expense, e);
+                }
+            });
+        }
+
+        // Sort by date (most recent first) using the parsed date object
+        allActivities.sort((a, b) => {
+            try {
+                const timeA = a.dateObj.getTime();
+                const timeB = b.dateObj.getTime();
+                if (isNaN(timeA) || isNaN(timeB)) return 0;
+                if (timeB !== timeA) return timeB - timeA;
+                // If same date, sort by ID (most recent first)
+                return (b.id || 0) - (a.id || 0);
+            } catch (e) {
+                console.warn('Error sorting activities:', e);
+                return 0;
+            }
+        });
 
         if (allActivities.length === 0) {
             recentActivity.innerHTML = '<p class="no-data">No recent activity</p>';
             return;
         }
 
-        recentActivity.innerHTML = allActivities.slice(0, 10).map(activity => `
-            <div class="activity-item">
-                <div class="activity-description">
-                    <i class="${activity.icon}"></i> ${activity.description}
+        // Show the 10 most recent activities
+        try {
+            recentActivity.innerHTML = allActivities.slice(0, 10).map(activity => `
+                <div class="activity-item">
+                    <div class="activity-description">
+                        <i class="${activity.icon}"></i> ${activity.description}
+                    </div>
+                    <div class="activity-amount ${activity.color}">
+                        ${activity.amount >= 0 ? '+' : ''}${this.formatCurrency(Math.abs(activity.amount))}
+                    </div>
                 </div>
-                <div class="activity-amount ${activity.color}">
-                    ${activity.amount >= 0 ? '+' : ''}${this.formatCurrency(activity.amount)}
-                </div>
-            </div>
-        `).join('');
+            `).join('');
+        } catch (e) {
+            console.error('Error rendering recent activity:', e);
+            recentActivity.innerHTML = '<p class="no-data">Error loading recent activity</p>';
+        }
     }
 
     // Table Rendering
@@ -371,9 +429,54 @@ class BusinessManager {
         this.renderSalesTable();
     }
 
-    renderExpensesTable() {
+    renderExpensesPagination(total, page, totalPages) {
+        const container = document.getElementById('expensesPagination');
+        if (!container) return;
+        if (total <= this.expensesPageSize) {
+            container.innerHTML = '';
+            return;
+        }
+        const disablePrev = page <= 1;
+        const disableNext = page >= totalPages;
+        container.className = 'pagination';
+        container.innerHTML = `
+            <button ${disablePrev ? 'disabled' : ''} aria-label="Previous" onclick="businessManager.changeExpensesPage(${page - 1})">Prev</button>
+            <span style="align-self:center; color:#4a5568;">Page ${page} of ${totalPages}</span>
+            <button ${disableNext ? 'disabled' : ''} aria-label="Next" onclick="businessManager.changeExpensesPage(${page + 1})">Next</button>
+        `;
+    }
+
+    changeExpensesPage(nextPage) {
+        this.expensesPage = nextPage;
+        this.renderExpensesTable();
+    }
+
+    renderExpensesTable(dataOverride) {
         const tbody = document.getElementById('expensesTableBody');
-        this.renderTable(tbody, this.expenses, 'expenses');
+        const data = Array.isArray(dataOverride) ? dataOverride : (this.expensesFiltered || this.expenses);
+        const sorted = [...data].sort((a, b) => {
+            const da = this.parseLocalDate(a.date).getTime();
+            const db = this.parseLocalDate(b.date).getTime();
+            if (db !== da) return db - da;
+            return (b.id || 0) - (a.id || 0);
+        });
+
+        const total = sorted.length;
+        const pageSize = this.expensesPageSize;
+        const totalPages = Math.max(1, Math.ceil(total / pageSize));
+        if (this.expensesPage > totalPages) this.expensesPage = totalPages;
+        if (this.expensesPage < 1) this.expensesPage = 1;
+        const start = (this.expensesPage - 1) * pageSize;
+        const end = start + pageSize;
+        const pageItems = sorted.slice(start, end);
+
+        if (pageItems.length === 0) {
+            tbody.innerHTML = `<tr class="no-data-row"><td colspan="${this.getColumnCount('expenses')}">No expenses recorded yet</td></tr>`;
+        } else {
+            this.renderTable(tbody, pageItems, 'expenses');
+        }
+
+        this.renderExpensesPagination(total, this.expensesPage, totalPages);
     }
 
     renderInventoryTable() {
@@ -449,7 +552,7 @@ class BusinessManager {
     getColumnCount(type) {
         switch (type) {
             case 'sales': return 6;
-            case 'expenses': return 5;
+            case 'expenses': return 6;
             case 'inventory': return 7;
             default: return 5;
         }
@@ -499,7 +602,9 @@ class BusinessManager {
             );
         }
 
-        this.renderFilteredTable('expensesTableBody', filteredExpenses, 'expenses');
+        this.expensesFiltered = filteredExpenses;
+        this.expensesPage = 1;
+        this.renderExpensesTable(filteredExpenses);
     }
 
     filterInventory() {
@@ -536,6 +641,13 @@ class BusinessManager {
             return;
         }
 
+        if (type === 'expenses') {
+            this.expensesFiltered = filteredData;
+            this.expensesPage = 1;
+            this.renderExpensesTable(filteredData);
+            return;
+        }
+
         this.renderTable(tbody, filteredData, type);
     }
 
@@ -551,6 +663,7 @@ class BusinessManager {
                 case 'expenses':
                     this.expenses = this.expenses.filter(expense => expense.id !== id);
                     this.saveData('expenses', this.expenses);
+                    this.expensesFiltered = null; // reset filter
                     this.renderExpensesTable();
                     break;
                 case 'inventory':
@@ -570,8 +683,14 @@ class BusinessManager {
             version: 1,
             exportedAt: new Date().toISOString(),
             data: {
-                sales: this.sales,
-                expenses: this.expenses,
+                sales: this.sales.map(sale => ({
+                    ...sale,
+                    date: this.formatDateForStorage(sale.date)
+                })),
+                expenses: this.expenses.map(expense => ({
+                    ...expense,
+                    date: this.formatDateForStorage(expense.date)
+                })),
                 inventory: this.inventory,
                 bankBalance: this.bankBalance
             }
@@ -613,10 +732,10 @@ class BusinessManager {
         let rows = [];
         switch (type) {
             case 'sales':
-                rows = [['date','item','quantity','price','total'], ...this.sales.map(s => [s.date, s.item, s.quantity, s.price, s.total])];
+                rows = [['date','item','quantity','price','total'], ...this.sales.map(s => [this.formatDateForStorage(s.date), s.item, s.quantity, s.price, s.total])];
                 break;
             case 'expenses':
-                rows = [['date','category','storeVendor','description','amount'], ...this.expenses.map(x => [x.date, x.category, x.storeVendor, x.description, x.amount])];
+                rows = [['date','category','storeVendor','description','amount'], ...this.expenses.map(x => [this.formatDateForStorage(x.date), x.category, x.storeVendor, x.description, x.amount])];
                 break;
             case 'inventory':
                 rows = [['name','category','currentStock','minStock','unitCost','totalValue'], ...this.inventory.map(i => [i.name, i.category, i.currentStock, i.minStock, i.unitCost, i.totalValue])];
@@ -645,7 +764,7 @@ class BusinessManager {
                     const idx = this.indexes(header, ['date','item','quantity','price','total']);
                     imported = dataRows.map(r => this.normalizeSale({
                         id: Date.now() + Math.floor(Math.random()*100000),
-                        date: r[idx.date] || '',
+                        date: this.formatDateForStorage(r[idx.date] || ''),
                         item: r[idx.item] || '',
                         quantity: Number(r[idx.quantity] || 0),
                         price: Number(r[idx.price] || 0),
@@ -658,7 +777,7 @@ class BusinessManager {
                     const idx = this.indexes(header, ['date','category','storevendor','description','amount']);
                     imported = dataRows.map(r => this.normalizeExpense({
                         id: Date.now() + Math.floor(Math.random()*100000),
-                        date: r[idx.date] || '',
+                        date: this.formatDateForStorage(r[idx.date] || ''),
                         category: r[idx.category] || '',
                         storeVendor: r[idx.storevendor] || '',
                         description: r[idx.description] || '',
@@ -696,7 +815,7 @@ class BusinessManager {
     normalizeSale = (s) => {
         return {
             id: s.id || Date.now() + Math.floor(Math.random()*100000),
-            date: s.date,
+            date: this.formatDateForStorage(s.date),
             item: s.item,
             quantity: Number(s.quantity) || 0,
             price: Number(s.price) || 0,
@@ -707,7 +826,7 @@ class BusinessManager {
     normalizeExpense = (e) => {
         return {
             id: e.id || Date.now() + Math.floor(Math.random()*100000),
-            date: e.date,
+            date: this.formatDateForStorage(e.date),
             category: e.category,
             storeVendor: e.storeVendor,
             description: e.description,
@@ -820,21 +939,35 @@ class BusinessManager {
     }
 
     formatDate(dateString) {
-        return this.parseLocalDate(dateString).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric'
-        });
+        const date = this.parseLocalDate(dateString);
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const year = date.getFullYear();
+        return `${day}/${month}/${year}`;
     }
 
     parseLocalDate(dateString) {
-        // Expecting yyyy-mm-dd from input[type=date]; construct as local date to avoid TZ shifts
+        // Handle dd/mm/yyyy format
+        if (typeof dateString === 'string' && /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateString)) {
+            const [d, m, y] = dateString.split('/').map(Number);
+            return new Date(y, m - 1, d);
+        }
+        // Handle yyyy-mm-dd from input[type=date]; construct as local date to avoid TZ shifts
         if (typeof dateString === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
             const [y, m, d] = dateString.split('-').map(Number);
             return new Date(y, m - 1, d);
         }
         const d = new Date(dateString);
         return isNaN(d.getTime()) ? new Date() : d;
+    }
+
+    formatDateForStorage(dateString) {
+        // Convert date to dd/mm/yyyy format for storage and CSV export
+        const date = this.parseLocalDate(dateString);
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const year = date.getFullYear();
+        return `${day}/${month}/${year}`;
     }
 
     capitalizeFirst(str) {
