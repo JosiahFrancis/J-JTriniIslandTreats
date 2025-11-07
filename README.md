@@ -13,27 +13,32 @@ A comprehensive web-based business management system designed specifically for S
 ### 📊 **Dashboard Overview**
 
 - **Real-time Financial Summary**: View total sales, expenses, net profit, and bank balance for the current month
-- **Recent Activity Feed**: Track your latest transactions and business activities
+- **Recent Activity Feed**: Automatically displays the 10 most recent sales and expenses, sorted by date (most recent first)
 - **Interactive Cards**: Click on bank balance to update your current balance
+- **Monthly View**: Use the month picker to view financial data for any month
 
 ### 💰 **Sales Management**
 
 - Add, view, and delete sales records
 - Track item names, quantities, prices, and total amounts
+- **Pagination**: View 10 sales per page with easy navigation
 - Date filtering and search functionality
 - Automatic total calculations
+- Optional inventory integration (automatically reduce stock when recording sales)
 
 ### 📝 **Expense Tracking**
 
 - Categorized expense management:
   - 🥤 Ingredients (syrups, ice, sugar, etc.)
   - 🔧 Equipment (machines, tools, maintenance)
-  - ⚡ Utilities (electricity, water, gas)
+  - 🏷️ Labels
+  - ⛪ Tithes
   - 🏠 Rent
   - 📢 Marketing
   - 📦 Other expenses
-- Date filtering and search capabilities
-- Detailed expense descriptions
+- **Pagination**: View 10 expenses per page with easy navigation
+- Date filtering, category filtering, and search capabilities
+- Detailed expense descriptions with store/vendor tracking
 
 ### 📦 **Inventory Management**
 
@@ -58,9 +63,12 @@ A comprehensive web-based business management system designed specifically for S
 
 ### 📱 **Mobile-Friendly Design**
 
-- Responsive layout that works on all devices
-- Touch-friendly interface for mobile and tablet use
-- Optimized for small screens
+- **Fully Responsive**: Works seamlessly on phones, tablets, and desktops
+- **Scrollable Tables**: Tables scroll horizontally on mobile devices with sticky first column
+- **Scrollable Modals**: All forms are fully scrollable on mobile, ensuring you can access all fields
+- **Touch-Optimized**: Large buttons and touch-friendly controls
+- **Adaptive Layout**: Interface automatically adjusts for different screen sizes
+- **Optimized Typography**: Font sizes and spacing optimized for readability on all devices
 
 ## 🚀 Getting Started
 
@@ -128,9 +136,11 @@ A comprehensive web-based business management system designed specifically for S
 3. Fill in the form:
    - Date of sale
    - Item name (e.g., "Snow Ice Cup", "Tropical Smoothie")
+   - **Optional**: Link to inventory item (automatically reduces stock)
    - Quantity sold
    - Price per unit
 4. Click "Add Sale" to save
+5. **Note**: Sales are paginated - you'll see 10 per page. Use the pagination controls at the bottom to navigate.
 
 ### 💸 **Recording Expenses**
 
@@ -138,10 +148,12 @@ A comprehensive web-based business management system designed specifically for S
 2. Click "Add Expense" button
 3. Fill in the form:
    - Date of expense
-   - Category (select from dropdown)
+   - Category (select from dropdown: Ingredients, Equipment, Labels, Tithes, Rent, Marketing, Other)
+   - Store/Vendor (e.g., "Pricesmart", "Massy")
    - Description (e.g., "Sugar purchase", "Equipment repair")
    - Amount spent
 4. Click "Add Expense" to save
+5. **Note**: Expenses are paginated - you'll see 10 per page. Use the pagination controls at the bottom to navigate.
 
 ### 📦 **Managing Inventory**
 
@@ -157,10 +169,11 @@ A comprehensive web-based business management system designed specifically for S
 
 ### 🔍 **Searching and Filtering**
 
-- Use the search boxes to find specific items
-- Use date filters to view records from specific dates
-- Use category filters to view items by type
+- **Sales**: Search by item name, filter by date
+- **Expenses**: Search by description or category, filter by date and category
+- **Inventory**: Search by item name, filter by category
 - All filters work in combination
+- Filtered results respect pagination (10 items per page)
 
 ### 🗑️ **Deleting Records**
 
@@ -312,7 +325,16 @@ A: Make sure the server is running on `http://localhost:3000`.
 A: Check that the `business_data.db` file exists and hasn't been deleted.
 
 **Q: The website looks broken on my phone.**
-A: Make sure you're accessing the correct URL (`http://localhost:3000`).
+A: Make sure you're accessing the correct URL (`http://localhost:3000`). The site is fully mobile-responsive - tables will scroll horizontally and modals are scrollable.
+
+**Q: I can't see all the table columns on my phone.**
+A: Tables are designed to scroll horizontally on mobile. Swipe left/right on the table to see all columns. The first column (Date) stays visible while scrolling.
+
+**Q: The modal form is cut off on my phone.**
+A: All modals are fully scrollable. Scroll within the modal to see all form fields. The header and buttons remain visible while scrolling.
+
+**Q: Recent activity isn't showing my latest transactions.**
+A: Recent activity automatically updates when you add new sales or expenses. It shows the 10 most recent items sorted by date. Try refreshing the page if it doesn't update immediately.
 
 ### Development Commands
 
@@ -360,12 +382,21 @@ _Keep your business organized and profitable!_ 🏝️🍧
 
 ## 🔄 Version History
 
-### v2.0.0 (Current)
+### v2.1.0 (Current)
+- ✅ **Mobile Optimization**: Fully responsive design with scrollable tables and modals
+- ✅ **Expenses Pagination**: Added pagination to expenses table (10 items per page)
+- ✅ **Recent Activity Improvements**: Shows top 10 most recent sales and expenses, properly sorted by date
+- ✅ **Enhanced Table Features**: Horizontal scrolling on mobile, sticky first column
+- ✅ **Improved Modal UX**: Scrollable forms that work perfectly on mobile devices
+- ✅ **Better Date Handling**: Improved date parsing and sorting for accurate chronological display
+
+### v2.0.0
 - ✅ Added SQLite database storage
 - ✅ RESTful API backend
 - ✅ Migration tools for localStorage data
 - ✅ Improved data reliability
 - ✅ Better error handling
+- ✅ Sales pagination (10 items per page)
 
 ### v1.0.0
 - ✅ Basic localStorage functionality
