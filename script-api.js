@@ -13,6 +13,11 @@ class BusinessManager {
         this.salesPageSize = 10;
         this.salesFiltered = null; // null = use full list
 
+        // Expenses pagination state
+        this.expensesPage = 1;
+        this.expensesPageSize = 10;
+        this.expensesFiltered = null; // null = use full list
+
         this.init();
     }
 
@@ -288,6 +293,8 @@ class BusinessManager {
             this.expenses = await this.apiRequest('/expenses');
             const balanceData = await this.apiRequest('/settings/bankBalance');
             this.bankBalance = balanceData.value ? parseFloat(balanceData.value) : 0;
+            this.expensesPage = 1; // show newest
+            this.expensesFiltered = null;
             this.updateDashboard();
             this.renderExpensesTable();
             this.closeModal('expensesModal');
@@ -477,53 +484,92 @@ class BusinessManager {
         const sales = Array.isArray(this.sales) ? this.sales : [];
         const expenses = Array.isArray(this.expenses) ? this.expenses : [];
 
-        // Add recent sales (get last 10, not just 5, to ensure we have enough after sorting)
-        if (sales.length > 0) {
-            sales.slice(-10).forEach(sale => {
-                if (!sale || !sale.date) return; // Skip invalid entries
+        console.log('updateRecentActivity called - Sales count:', sales.length, 'Expenses count:', expenses.length);
+
+        // Sort sales by date (most recent first) and get top 10
+        const sortedSales = sales
+            .filter(sale => sale && sale.date)
+            .map(sale => {
                 try {
                     const dateObj = this.parseLocalDate(sale.date);
-                    if (isNaN(dateObj.getTime())) return; // Skip invalid dates
-                    
-                    allActivities.push({
-                        type: 'sale',
-                        description: `Sold ${sale.quantity || 0}x ${sale.item || 'Unknown'}`,
-                        amount: sale.total || 0,
-                        date: sale.date,
-                        dateObj: dateObj,
-                        id: sale.id || 0,
-                        icon: 'fas fa-dollar-sign',
-                        color: 'text-success'
-                    });
+                    if (isNaN(dateObj.getTime())) return null;
+                    return { sale, dateObj };
                 } catch (e) {
-                    console.warn('Error processing sale:', sale, e);
+                    console.warn('Error parsing sale date:', sale, e);
+                    return null;
                 }
-            });
-        }
+            })
+            .filter(item => item !== null)
+            .sort((a, b) => {
+                const timeA = a.dateObj.getTime();
+                const timeB = b.dateObj.getTime();
+                if (timeB !== timeA) return timeB - timeA;
+                return (b.sale.id || 0) - (a.sale.id || 0);
+            })
+            .slice(0, 10); // Get top 10 most recent
 
-        // Add recent expenses (get last 10, not just 5, to ensure we have enough after sorting)
-        if (expenses.length > 0) {
-            expenses.slice(-10).forEach(expense => {
-                if (!expense || !expense.date) return; // Skip invalid entries
+        // Add recent sales
+        sortedSales.forEach(({ sale, dateObj }) => {
+            try {
+                // Calculate total if not present
+                const total = sale.total !== undefined ? sale.total : ((sale.quantity || 0) * (sale.price || 0));
+                
+                allActivities.push({
+                    type: 'sale',
+                    description: `Sold ${sale.quantity || 0}x ${sale.item || 'Unknown'}`,
+                    amount: total,
+                    date: sale.date,
+                    dateObj: dateObj,
+                    id: sale.id || 0,
+                    icon: 'fas fa-dollar-sign',
+                    color: 'text-success'
+                });
+            } catch (e) {
+                console.warn('Error processing sale:', sale, e);
+            }
+        });
+
+        // Sort expenses by date (most recent first) and get top 10
+        const sortedExpenses = expenses
+            .filter(expense => expense && expense.date)
+            .map(expense => {
                 try {
                     const dateObj = this.parseLocalDate(expense.date);
-                    if (isNaN(dateObj.getTime())) return; // Skip invalid dates
-                    
-                    allActivities.push({
-                        type: 'expense',
-                        description: `${this.capitalizeFirst(expense.category || 'other')}: ${expense.description || 'No description'}`,
-                        amount: -(expense.amount || 0),
-                        date: expense.date,
-                        dateObj: dateObj,
-                        id: expense.id || 0,
-                        icon: 'fas fa-receipt',
-                        color: 'text-danger'
-                    });
+                    if (isNaN(dateObj.getTime())) return null;
+                    return { expense, dateObj };
                 } catch (e) {
-                    console.warn('Error processing expense:', expense, e);
+                    console.warn('Error parsing expense date:', expense, e);
+                    return null;
                 }
-            });
-        }
+            })
+            .filter(item => item !== null)
+            .sort((a, b) => {
+                const timeA = a.dateObj.getTime();
+                const timeB = b.dateObj.getTime();
+                if (timeB !== timeA) return timeB - timeA;
+                return (b.expense.id || 0) - (a.expense.id || 0);
+            })
+            .slice(0, 10); // Get top 10 most recent
+
+        // Add recent expenses
+        sortedExpenses.forEach(({ expense, dateObj }) => {
+            try {
+                allActivities.push({
+                    type: 'expense',
+                    description: `${this.capitalizeFirst(expense.category || 'other')}: ${expense.description || 'No description'}`,
+                    amount: -(expense.amount || 0),
+                    date: expense.date,
+                    dateObj: dateObj,
+                    id: expense.id || 0,
+                    icon: 'fas fa-receipt',
+                    color: 'text-danger'
+                });
+            } catch (e) {
+                console.warn('Error processing expense:', expense, e);
+            }
+        });
+
+        console.log('Total activities found:', allActivities.length);
 
         // Sort by date (most recent first) using the parsed date object
         allActivities.sort((a, b) => {
@@ -541,13 +587,17 @@ class BusinessManager {
         });
 
         if (allActivities.length === 0) {
+            console.log('No activities to display');
             recentActivity.innerHTML = '<p class="no-data">No recent activity</p>';
             return;
         }
 
         // Show the 10 most recent activities
         try {
-            recentActivity.innerHTML = allActivities.slice(0, 10).map(activity => `
+            const activitiesToShow = allActivities.slice(0, 10);
+            console.log('Rendering activities:', activitiesToShow.length, activitiesToShow);
+            
+            recentActivity.innerHTML = activitiesToShow.map(activity => `
                 <div class="activity-item">
                     <div class="activity-description">
                         <i class="${activity.icon}"></i> ${activity.description}
@@ -557,6 +607,8 @@ class BusinessManager {
                     </div>
                 </div>
             `).join('');
+            
+            console.log('Recent activity rendered successfully');
         } catch (e) {
             console.error('Error rendering recent activity:', e);
             recentActivity.innerHTML = '<p class="no-data">Error loading recent activity</p>';
@@ -614,9 +666,54 @@ class BusinessManager {
         this.renderSalesTable();
     }
 
-    renderExpensesTable() {
+    renderExpensesTable(dataOverride) {
         const tbody = document.getElementById('expensesTableBody');
-        this.renderTable(tbody, this.expenses, 'expenses');
+        const data = Array.isArray(dataOverride) ? dataOverride : (this.expensesFiltered || this.expenses);
+        const sorted = [...data].sort((a, b) => {
+            const da = this.parseLocalDate(a.date).getTime();
+            const db = this.parseLocalDate(b.date).getTime();
+            if (db !== da) return db - da;
+            return (b.id || 0) - (a.id || 0);
+        });
+
+        const total = sorted.length;
+        const pageSize = this.expensesPageSize;
+        const totalPages = Math.max(1, Math.ceil(total / pageSize));
+        if (this.expensesPage > totalPages) this.expensesPage = totalPages;
+        if (this.expensesPage < 1) this.expensesPage = 1;
+        const start = (this.expensesPage - 1) * pageSize;
+        const end = start + pageSize;
+        const pageItems = sorted.slice(start, end);
+
+        if (pageItems.length === 0) {
+            tbody.innerHTML = `<tr class="no-data-row"><td colspan="${this.getColumnCount('expenses')}">No expenses recorded yet</td></tr>`;
+        } else {
+            this.renderTable(tbody, pageItems, 'expenses');
+        }
+
+        this.renderExpensesPagination(total, this.expensesPage, totalPages);
+    }
+
+    renderExpensesPagination(total, page, totalPages) {
+        const container = document.getElementById('expensesPagination');
+        if (!container) return;
+        if (total <= this.expensesPageSize) {
+            container.innerHTML = '';
+            return;
+        }
+        const disablePrev = page <= 1;
+        const disableNext = page >= totalPages;
+        container.className = 'pagination';
+        container.innerHTML = `
+            <button ${disablePrev ? 'disabled' : ''} aria-label="Previous" onclick="businessManager.changeExpensesPage(${page - 1})">Prev</button>
+            <span style="align-self:center; color:#4a5568;">Page ${page} of ${totalPages}</span>
+            <button ${disableNext ? 'disabled' : ''} aria-label="Next" onclick="businessManager.changeExpensesPage(${page + 1})">Next</button>
+        `;
+    }
+
+    changeExpensesPage(nextPage) {
+        this.expensesPage = nextPage;
+        this.renderExpensesTable();
     }
 
     renderInventoryTable() {
@@ -750,7 +847,9 @@ class BusinessManager {
             );
         }
 
-        this.renderFilteredTable('expensesTableBody', filteredExpenses, 'expenses');
+        this.expensesFiltered = filteredExpenses;
+        this.expensesPage = 1;
+        this.renderExpensesTable(filteredExpenses);
     }
 
     filterInventory() {
@@ -787,6 +886,13 @@ class BusinessManager {
             return;
         }
 
+        if (type === 'expenses') {
+            this.expensesFiltered = filteredData;
+            this.expensesPage = 1;
+            this.renderExpensesTable(filteredData);
+            return;
+        }
+
         this.renderTable(tbody, filteredData, type);
     }
 
@@ -811,6 +917,7 @@ class BusinessManager {
                         break;
                     case 'expenses':
                         this.expenses = await this.apiRequest('/expenses');
+                        this.expensesFiltered = null; // reset filter
                         this.renderExpensesTable();
                         // Reload bank balance
                         const expensesBalanceData = await this.apiRequest('/settings/bankBalance');
