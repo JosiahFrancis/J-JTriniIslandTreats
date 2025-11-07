@@ -466,50 +466,101 @@ class BusinessManager {
 
     updateRecentActivity() {
         const recentActivity = document.getElementById('recentActivity');
+        if (!recentActivity) {
+            console.warn('Recent activity element not found');
+            return;
+        }
+        
         const allActivities = [];
 
-        // Add recent sales
-        this.sales.slice(-5).forEach(sale => {
-            allActivities.push({
-                type: 'sale',
-                description: `Sold ${sale.quantity}x ${sale.item}`,
-                amount: sale.total,
-                date: sale.date,
-                icon: 'fas fa-dollar-sign',
-                color: 'text-success'
-            });
-        });
+        // Ensure sales and expenses are arrays
+        const sales = Array.isArray(this.sales) ? this.sales : [];
+        const expenses = Array.isArray(this.expenses) ? this.expenses : [];
 
-        // Add recent expenses
-        this.expenses.slice(-5).forEach(expense => {
-            allActivities.push({
-                type: 'expense',
-                description: `${expense.category}: ${expense.description}`,
-                amount: -expense.amount,
-                date: expense.date,
-                icon: 'fas fa-receipt',
-                color: 'text-danger'
+        // Add recent sales (get last 10, not just 5, to ensure we have enough after sorting)
+        if (sales.length > 0) {
+            sales.slice(-10).forEach(sale => {
+                if (!sale || !sale.date) return; // Skip invalid entries
+                try {
+                    const dateObj = this.parseLocalDate(sale.date);
+                    if (isNaN(dateObj.getTime())) return; // Skip invalid dates
+                    
+                    allActivities.push({
+                        type: 'sale',
+                        description: `Sold ${sale.quantity || 0}x ${sale.item || 'Unknown'}`,
+                        amount: sale.total || 0,
+                        date: sale.date,
+                        dateObj: dateObj,
+                        id: sale.id || 0,
+                        icon: 'fas fa-dollar-sign',
+                        color: 'text-success'
+                    });
+                } catch (e) {
+                    console.warn('Error processing sale:', sale, e);
+                }
             });
-        });
+        }
 
-        // Sort by date (most recent first)
-        allActivities.sort((a, b) => new Date(b.date) - new Date(a.date));
+        // Add recent expenses (get last 10, not just 5, to ensure we have enough after sorting)
+        if (expenses.length > 0) {
+            expenses.slice(-10).forEach(expense => {
+                if (!expense || !expense.date) return; // Skip invalid entries
+                try {
+                    const dateObj = this.parseLocalDate(expense.date);
+                    if (isNaN(dateObj.getTime())) return; // Skip invalid dates
+                    
+                    allActivities.push({
+                        type: 'expense',
+                        description: `${this.capitalizeFirst(expense.category || 'other')}: ${expense.description || 'No description'}`,
+                        amount: -(expense.amount || 0),
+                        date: expense.date,
+                        dateObj: dateObj,
+                        id: expense.id || 0,
+                        icon: 'fas fa-receipt',
+                        color: 'text-danger'
+                    });
+                } catch (e) {
+                    console.warn('Error processing expense:', expense, e);
+                }
+            });
+        }
+
+        // Sort by date (most recent first) using the parsed date object
+        allActivities.sort((a, b) => {
+            try {
+                const timeA = a.dateObj.getTime();
+                const timeB = b.dateObj.getTime();
+                if (isNaN(timeA) || isNaN(timeB)) return 0;
+                if (timeB !== timeA) return timeB - timeA;
+                // If same date, sort by ID (most recent first)
+                return (b.id || 0) - (a.id || 0);
+            } catch (e) {
+                console.warn('Error sorting activities:', e);
+                return 0;
+            }
+        });
 
         if (allActivities.length === 0) {
             recentActivity.innerHTML = '<p class="no-data">No recent activity</p>';
             return;
         }
 
-        recentActivity.innerHTML = allActivities.slice(0, 10).map(activity => `
-            <div class="activity-item">
-                <div class="activity-description">
-                    <i class="${activity.icon}"></i> ${activity.description}
+        // Show the 10 most recent activities
+        try {
+            recentActivity.innerHTML = allActivities.slice(0, 10).map(activity => `
+                <div class="activity-item">
+                    <div class="activity-description">
+                        <i class="${activity.icon}"></i> ${activity.description}
+                    </div>
+                    <div class="activity-amount ${activity.color}">
+                        ${activity.amount >= 0 ? '+' : ''}${this.formatCurrency(Math.abs(activity.amount))}
+                    </div>
                 </div>
-                <div class="activity-amount ${activity.color}">
-                    ${activity.amount >= 0 ? '+' : ''}${this.formatCurrency(activity.amount)}
-                </div>
-            </div>
-        `).join('');
+            `).join('');
+        } catch (e) {
+            console.error('Error rendering recent activity:', e);
+            recentActivity.innerHTML = '<p class="no-data">Error loading recent activity</p>';
+        }
     }
 
     // Table Rendering
@@ -1092,6 +1143,12 @@ class BusinessManager {
     }
 
     parseLocalDate(dateString) {
+        // Handle dd/mm/yyyy format
+        if (typeof dateString === 'string' && /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateString)) {
+            const [d, m, y] = dateString.split('/').map(Number);
+            return new Date(y, m - 1, d);
+        }
+        // Handle yyyy-mm-dd from input[type=date] or database; construct as local date to avoid TZ shifts
         if (typeof dateString === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
             const [y, m, d] = dateString.split('-').map(Number);
             return new Date(y, m - 1, d);
