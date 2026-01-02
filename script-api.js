@@ -410,6 +410,31 @@ class BusinessManager {
         }
     }
 
+    async repairInventoryValues() {
+        if (!confirm('This will fix all incorrect total value calculations in your inventory. Continue?')) {
+            return;
+        }
+
+        try {
+            const result = await this.apiRequest('/inventory/repair', {
+                method: 'POST'
+            });
+
+            // Reload inventory data to show corrected values
+            this.inventory = await this.apiRequest('/inventory');
+            this.renderInventoryTable();
+            this.populateInventoryDropdown();
+
+            this.showNotification(
+                result.message + (result.fixedCount > 0 ? ` Fixed ${result.fixedCount} item(s).` : ' All values were already correct!'),
+                'success'
+            );
+        } catch (error) {
+            console.error('Failed to repair inventory values:', error);
+            this.showNotification(error.message || 'Failed to repair inventory values', 'danger');
+        }
+    }
+
     async updateBankBalance() {
         try {
             const newBalance = parseFloat(document.getElementById('newBankBalance').value);
