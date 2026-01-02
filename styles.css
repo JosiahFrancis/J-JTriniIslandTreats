@@ -251,6 +251,16 @@ body {
     background: #c53030;
 }
 
+.btn-warning {
+    background: #d69e2e;
+    color: white;
+}
+
+.btn-warning:hover {
+    background: #b7791f;
+    transform: translateY(-2px);
+}
+
 .btn-small {
     padding: 6px 12px;
     font-size: 0.8rem;
@@ -433,19 +443,27 @@ form {
 }
 
 .form-group input,
-.form-group select {
+.form-group select,
+.form-group textarea {
     width: 100%;
     padding: 12px 15px;
     border: 2px solid #e2e8f0;
     border-radius: 8px;
     font-size: 1rem;
     transition: border-color 0.3s ease;
+    font-family: inherit;
 }
 
 .form-group input:focus,
-.form-group select:focus {
+.form-group select:focus,
+.form-group textarea:focus {
     outline: none;
     border-color: #667eea;
+}
+
+.form-group textarea {
+    resize: vertical;
+    min-height: 80px;
 }
 
 .form-help {
@@ -578,6 +596,18 @@ form {
         width: 100%;
         justify-content: center;
     }
+
+    .inventory-summary-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .summary-card-content {
+        gap: 12px;
+    }
+
+    .summary-amount {
+        font-size: 1.1rem;
+    }
 }
 
 @media (max-width: 480px) {
@@ -638,6 +668,82 @@ form {
 
 .mt-20 {
     margin-top: 20px;
+}
+
+/* Inventory Summary Grid */
+.inventory-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+}
+
+.inventory-summary-card {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.inventory-summary-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 25px rgba(0, 0, 0, 0.15);
+}
+
+.summary-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid #e2e8f0;
+}
+
+.summary-card-header h4 {
+    margin: 0;
+    color: #4a5568;
+    font-size: 1.1rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.item-count {
+    background: #f7fafc;
+    color: #718096;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.summary-card-content {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.summary-value,
+.summary-quantity {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+}
+
+.summary-label {
+    color: #718096;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.summary-amount {
+    color: #2d3748;
+    font-size: 1.3rem;
+    font-weight: 700;
+}
+
+.summary-value .summary-amount {
+    color: #667eea;
 }
 
 /* Loading Animation */

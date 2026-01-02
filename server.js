@@ -73,6 +73,18 @@ function initializeDatabase() {
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`);
 
+        // Stock adjustments table for tracking damaged stock and free giveaways
+        db.run(`CREATE TABLE IF NOT EXISTS stock_adjustments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            inventory_item_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (inventory_item_id) REFERENCES inventory (id)
+        )`);
+
         // Add new columns to sales table if they don't exist (for existing databases)
         db.run(`ALTER TABLE sales ADD COLUMN inventory_item_id INTEGER`, (err) => {
             // Ignore error if column already exists
@@ -168,7 +180,7 @@ app.post('/api/sales', (req, res) => {
                     // If inventoryItemId is provided, update inventory stock
                     if (inventoryItemId) {
                         // First check if the inventory item exists and has enough stock
-                        db.get('SELECT current_stock FROM inventory WHERE id = ?', [inventoryItemId], (err, row) => {
+                        db.get('SELECT current_stock, unit_cost FROM inventory WHERE id = ?', [inventoryItemId], (err, row) => {
                             if (err) {
                                 db.run('ROLLBACK');
                                 res.status(500).json({ error: err.message });
@@ -181,6 +193,7 @@ app.post('/api/sales', (req, res) => {
                             }
 
                             const currentStock = row.current_stock;
+                            const unitCost = row.unit_cost;
                             const newStock = currentStock - quantity;
 
                             if (newStock < 0) {
@@ -191,10 +204,13 @@ app.post('/api/sales', (req, res) => {
                                 return;
                             }
 
+                            // Calculate total_value explicitly: newStock * unit_cost
+                            const newTotalValue = newStock * unitCost;
+
                             // Update inventory stock
                             db.run(
-                                'UPDATE inventory SET current_stock = ?, total_value = current_stock * unit_cost, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                                [newStock, inventoryItemId],
+                                'UPDATE inventory SET current_stock = ?, total_value = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                                [newStock, newTotalValue, inventoryItemId],
                                 function(err) {
                                     if (err) {
                                         db.run('ROLLBACK');
@@ -302,17 +318,33 @@ app.delete('/api/sales/:id', (req, res) => {
 
                 // If this sale affected inventory, restore the stock
                 if (sale.inventory_item_id && sale.inventory_quantity) {
-                    db.run(
-                        'UPDATE inventory SET current_stock = current_stock + ?, total_value = current_stock * unit_cost, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                        [sale.inventory_quantity, sale.inventory_item_id],
-                        function(err) {
-                            if (err) {
-                                db.run('ROLLBACK');
-                                res.status(500).json({ error: err.message });
-                                return;
-                            }
+                    // Get current stock and unit_cost to calculate new total_value
+                    db.get('SELECT current_stock, unit_cost FROM inventory WHERE id = ?', [sale.inventory_item_id], (err, invRow) => {
+                        if (err) {
+                            db.run('ROLLBACK');
+                            res.status(500).json({ error: err.message });
+                            return;
+                        }
+                        if (!invRow) {
+                            db.run('ROLLBACK');
+                            res.status(404).json({ error: 'Inventory item not found' });
+                            return;
+                        }
 
-                            // Update bank balance
+                        const restoredStock = invRow.current_stock + sale.inventory_quantity;
+                        const newTotalValue = restoredStock * invRow.unit_cost;
+
+                        db.run(
+                            'UPDATE inventory SET current_stock = ?, total_value = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                            [restoredStock, newTotalValue, sale.inventory_item_id],
+                            function(err) {
+                                if (err) {
+                                    db.run('ROLLBACK');
+                                    res.status(500).json({ error: err.message });
+                                    return;
+                                }
+
+                                // Update bank balance
                             db.run(
                                 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
                                 ['bankBalance', newBalance.toString()],
@@ -349,8 +381,8 @@ app.delete('/api/sales/:id', (req, res) => {
                                     });
                                 }
                             );
-                        }
-                    );
+                        });
+                    });
                 } else {
                     // No inventory to restore, just update bank balance and delete the sale
                     db.run(
@@ -593,19 +625,45 @@ app.get('/api/inventory', (req, res) => {
             res.status(500).json({ error: err.message });
             return;
         }
-        res.json(rows);
+        
+        // Always calculate total_value correctly: current_stock * unit_cost
+        // This ensures correct values even if database has incorrect entries
+        const correctedRows = rows.map(row => {
+            const correctTotalValue = row.current_stock * row.unit_cost;
+            
+            // If the value in database is incorrect, update it
+            if (Math.abs(row.total_value - correctTotalValue) > 0.01) {
+                // Update the database asynchronously (don't wait for it)
+                db.run(
+                    'UPDATE inventory SET total_value = ? WHERE id = ?',
+                    [correctTotalValue, row.id],
+                    (updateErr) => {
+                        if (updateErr) {
+                            console.error(`Failed to auto-repair inventory item ${row.id}:`, updateErr);
+                        }
+                    }
+                );
+            }
+            
+            return {
+                ...row,
+                total_value: correctTotalValue
+            };
+        });
+        
+        res.json(correctedRows);
     });
 });
 
 app.post('/api/inventory', (req, res) => {
-    const { name, category, currentStock, minStock, unitCost, totalValue, stockDate } = req.body;
-    const calculatedTotal = currentStock * unitCost;
-    const finalTotal = totalValue || calculatedTotal;
+    const { name, category, currentStock, minStock, unitCost, stockDate } = req.body;
+    // Always calculate total_value from current_stock * unit_cost, ignore any provided totalValue
+    const totalValue = currentStock * unitCost;
     const finalStockDate = stockDate || new Date().toISOString().split('T')[0]; // Default to today if not provided
 
     db.run(
         'INSERT INTO inventory (name, category, current_stock, min_stock, unit_cost, total_value, stock_date) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [name, category, currentStock, minStock, unitCost, finalTotal, finalStockDate],
+        [name, category, currentStock, minStock, unitCost, totalValue, finalStockDate],
         function(err) {
             if (err) {
                 res.status(500).json({ error: err.message });
@@ -682,8 +740,8 @@ app.put('/api/inventory/:id/stock', (req, res) => {
         return;
     }
 
-    // First get current stock
-    db.get('SELECT current_stock FROM inventory WHERE id = ?', [id], (err, row) => {
+    // First get current stock and unit_cost
+    db.get('SELECT current_stock, unit_cost FROM inventory WHERE id = ?', [id], (err, row) => {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
@@ -694,6 +752,7 @@ app.put('/api/inventory/:id/stock', (req, res) => {
         }
 
         const currentStock = row.current_stock;
+        const unitCost = row.unit_cost;
         let newStock;
         
         if (operation === 'subtract') {
@@ -709,10 +768,13 @@ app.put('/api/inventory/:id/stock', (req, res) => {
             return;
         }
 
+        // Calculate total_value explicitly
+        const newTotalValue = newStock * unitCost;
+
         // Update the stock
         db.run(
-            'UPDATE inventory SET current_stock = ?, total_value = current_stock * unit_cost, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-            [newStock, id],
+            'UPDATE inventory SET current_stock = ?, total_value = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [newStock, newTotalValue, id],
             function(err) {
                 if (err) {
                     res.status(500).json({ error: err.message });
@@ -726,6 +788,182 @@ app.put('/api/inventory/:id/stock', (req, res) => {
                 });
             }
         );
+    });
+});
+
+// Stock adjustments API (for damaged stock and free giveaways)
+app.post('/api/inventory/adjustments', (req, res) => {
+    const { inventoryItemId, date, quantity, reason, notes } = req.body;
+    
+    if (!inventoryItemId || !date || !quantity || !reason) {
+        res.status(400).json({ error: 'Missing required fields' });
+        return;
+    }
+
+    if (quantity <= 0) {
+        res.status(400).json({ error: 'Quantity must be greater than 0' });
+        return;
+    }
+
+    if (!['damaged', 'free_giveaway'].includes(reason)) {
+        res.status(400).json({ error: 'Reason must be "damaged" or "free_giveaway"' });
+        return;
+    }
+
+    // Start a transaction
+    db.serialize(() => {
+        db.run('BEGIN TRANSACTION');
+
+        // First check if the inventory item exists and has enough stock
+        db.get('SELECT current_stock, unit_cost FROM inventory WHERE id = ?', [inventoryItemId], (err, row) => {
+            if (err) {
+                db.run('ROLLBACK');
+                res.status(500).json({ error: err.message });
+                return;
+            }
+
+            if (!row) {
+                db.run('ROLLBACK');
+                res.status(404).json({ error: 'Inventory item not found' });
+                return;
+            }
+
+            const currentStock = row.current_stock;
+            const unitCost = row.unit_cost;
+            const newStock = currentStock - quantity;
+
+            if (newStock < 0) {
+                db.run('ROLLBACK');
+                res.status(400).json({ error: `Insufficient stock. Available: ${currentStock}` });
+                return;
+            }
+
+            // Calculate total_value explicitly
+            const newTotalValue = newStock * unitCost;
+
+            // Record the adjustment
+            db.run(
+                'INSERT INTO stock_adjustments (inventory_item_id, date, quantity, reason, notes) VALUES (?, ?, ?, ?, ?)',
+                [inventoryItemId, date, quantity, reason, notes || null],
+                function(err) {
+                    if (err) {
+                        db.run('ROLLBACK');
+                        res.status(500).json({ error: err.message });
+                        return;
+                    }
+
+                    // Update inventory stock
+                    db.run(
+                        'UPDATE inventory SET current_stock = ?, total_value = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                        [newStock, newTotalValue, inventoryItemId],
+                        function(err) {
+                            if (err) {
+                                db.run('ROLLBACK');
+                                res.status(500).json({ error: err.message });
+                                return;
+                            }
+
+                            db.run('COMMIT');
+                            res.json({
+                                message: 'Stock adjustment recorded successfully',
+                                adjustmentId: this.lastID,
+                                newStock: newStock,
+                                reason: reason
+                            });
+                        }
+                    );
+                }
+            );
+        });
+    });
+});
+
+// Get stock adjustments
+app.get('/api/inventory/adjustments', (req, res) => {
+    const { inventoryItemId } = req.query;
+    
+    let query = `
+        SELECT sa.*, i.name as item_name 
+        FROM stock_adjustments sa
+        JOIN inventory i ON sa.inventory_item_id = i.id
+    `;
+    const params = [];
+    
+    if (inventoryItemId) {
+        query += ' WHERE sa.inventory_item_id = ?';
+        params.push(inventoryItemId);
+    }
+    
+    query += ' ORDER BY sa.date DESC, sa.created_at DESC';
+    
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+// Repair inventory total_value calculations (fixes any incorrect total_value entries)
+app.post('/api/inventory/repair', (req, res) => {
+    db.serialize(() => {
+        // Get all inventory items
+        db.all('SELECT id, current_stock, unit_cost, total_value FROM inventory', [], (err, rows) => {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+
+            if (rows.length === 0) {
+                res.json({
+                    message: 'No inventory items to repair',
+                    fixedCount: 0
+                });
+                return;
+            }
+
+            let fixedCount = 0;
+            let errors = [];
+            let processed = 0;
+            const totalItems = rows.length;
+
+            const checkComplete = () => {
+                processed++;
+                if (processed === totalItems) {
+                    res.json({
+                        message: `Repaired ${fixedCount} inventory item(s)`,
+                        fixedCount: fixedCount,
+                        totalItems: totalItems,
+                        errors: errors.length > 0 ? errors : undefined
+                    });
+                }
+            };
+
+            // Update each item's total_value to be current_stock * unit_cost
+            rows.forEach((row) => {
+                const correctTotalValue = row.current_stock * row.unit_cost;
+                
+                // Only update if the value is incorrect (allowing for small floating point differences)
+                if (Math.abs(row.total_value - correctTotalValue) > 0.01) {
+                    db.run(
+                        'UPDATE inventory SET total_value = ? WHERE id = ?',
+                        [correctTotalValue, row.id],
+                        function(updateErr) {
+                            if (updateErr) {
+                                errors.push(`Failed to update item ${row.id}: ${updateErr.message}`);
+                            } else {
+                                fixedCount++;
+                            }
+                            checkComplete();
+                        }
+                    );
+                } else {
+                    // Value is already correct, just mark as processed
+                    checkComplete();
+                }
+            });
+        });
     });
 });
 
