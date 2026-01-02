@@ -198,9 +198,14 @@
         <div id="inventory" class="tab-content">
             <div class="section-header">
                 <h2><i class="fas fa-boxes"></i> Inventory Management</h2>
-                <button class="btn btn-primary" onclick="openModal('inventoryModal')">
-                    <i class="fas fa-plus"></i> Add Item
-                </button>
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn btn-warning" onclick="openModal('stockAdjustmentModal')">
+                        <i class="fas fa-exclamation-triangle"></i> Adjust Stock
+                    </button>
+                    <button class="btn btn-primary" onclick="openModal('inventoryModal')">
+                        <i class="fas fa-plus"></i> Add Item
+                    </button>
+                </div>
                 <div>
                     <button class="btn btn-secondary" onclick="exportCSV('inventory')">
                         <i class="fas fa-file-csv"></i> Export CSV
@@ -448,6 +453,53 @@
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal('editInventoryModal')">Cancel</button>
                     <button type="submit" class="btn btn-primary">Update Item</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Stock Adjustment Modal -->
+    <div id="stockAdjustmentModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-exclamation-triangle"></i> Stock Adjustment</h3>
+                <span class="close" onclick="closeModal('stockAdjustmentModal')">&times;</span>
+            </div>
+            <form id="stockAdjustmentForm">
+                <input type="hidden" id="adjustmentInventoryItemId">
+                <div class="form-group">
+                    <label for="adjustmentInventoryItem">Inventory Item:</label>
+                    <select id="adjustmentInventoryItem" required>
+                        <option value="">Select Item</option>
+                    </select>
+                    <small class="form-help">Select the item to adjust stock for</small>
+                </div>
+                <div class="form-group">
+                    <label for="adjustmentDate">Date:</label>
+                    <input type="date" id="adjustmentDate" required>
+                </div>
+                <div class="form-group">
+                    <label for="adjustmentQuantity">Quantity:</label>
+                    <input type="number" id="adjustmentQuantity" min="1" required>
+                    <small class="form-help">Amount of stock to remove</small>
+                </div>
+                <div class="form-group">
+                    <label for="adjustmentReason">Reason:</label>
+                    <select id="adjustmentReason" required>
+                        <option value="">Select Reason</option>
+                        <option value="damaged">Damaged Stock</option>
+                        <option value="free_giveaway">Free Giveaway</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="adjustmentNotes">Notes (Optional):</label>
+                    <textarea id="adjustmentNotes" rows="3" placeholder="Additional details about this adjustment..."></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('stockAdjustmentModal')">Cancel</button>
+                    <button type="submit" class="btn btn-warning">
+                        <i class="fas fa-minus-circle"></i> Adjust Stock
+                    </button>
                 </div>
             </form>
         </div>

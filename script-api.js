@@ -59,6 +59,11 @@ class BusinessManager {
             this.updateInventoryItem();
         });
 
+        document.getElementById('stockAdjustmentForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.addStockAdjustment();
+        });
+
         document.getElementById('bankBalanceForm').addEventListener('submit', (e) => {
             e.preventDefault();
             this.updateBankBalance();
@@ -160,6 +165,10 @@ class BusinessManager {
         document.getElementById('saleDate').value = today;
         document.getElementById('expenseDate').value = today;
         document.getElementById('inventoryStockDate').value = today;
+        const adjustmentDate = document.getElementById('adjustmentDate');
+        if (adjustmentDate) {
+            adjustmentDate.value = today;
+        }
     }
 
     switchTab(tabName) {
@@ -368,6 +377,36 @@ class BusinessManager {
         } catch (error) {
             console.error('Failed to update inventory item:', error);
             this.showNotification('Failed to update inventory item', 'danger');
+        }
+    }
+
+    async addStockAdjustment() {
+        try {
+            const adjustmentData = {
+                inventoryItemId: parseInt(document.getElementById('adjustmentInventoryItem').value),
+                date: document.getElementById('adjustmentDate').value,
+                quantity: parseInt(document.getElementById('adjustmentQuantity').value),
+                reason: document.getElementById('adjustmentReason').value,
+                notes: document.getElementById('adjustmentNotes').value || null
+            };
+
+            const result = await this.apiRequest('/inventory/adjustments', {
+                method: 'POST',
+                body: JSON.stringify(adjustmentData)
+            });
+
+            // Reload inventory data
+            this.inventory = await this.apiRequest('/inventory');
+            this.renderInventoryTable();
+            this.populateInventoryDropdown(); // Update the sales dropdown
+            this.closeModal('stockAdjustmentModal');
+            this.clearForm('stockAdjustmentForm');
+            
+            const reasonText = adjustmentData.reason === 'damaged' ? 'Damaged stock' : 'Free giveaway';
+            this.showNotification(`${reasonText} recorded successfully! New stock: ${result.newStock}`, 'success');
+        } catch (error) {
+            console.error('Failed to add stock adjustment:', error);
+            this.showNotification(error.message || 'Failed to record stock adjustment', 'danger');
         }
     }
 
@@ -781,10 +820,15 @@ class BusinessManager {
                             <td>${this.formatCurrency(item.unit_cost)}</td>
                             <td>${this.formatCurrency(item.total_value)}</td>
                             <td>
-                                <button class="btn btn-primary btn-small" onclick="businessManager.openEditInventoryModal(${JSON.stringify(item).replace(/"/g, '&quot;')})" style="margin-right: 5px;">
+                                <button class="btn btn-primary btn-small" onclick="businessManager.openEditInventoryModal(${JSON.stringify(item).replace(/"/g, '&quot;')})" style="margin-right: 5px;" title="Edit Item">
                                     <i class="fas fa-edit"></i>
                                 </button>
-                                <button class="btn btn-danger btn-small" onclick="businessManager.deleteItem('inventory', ${item.id})">
+                                ${item.current_stock > 0 ? `
+                                <button class="btn btn-warning btn-small" onclick="businessManager.openStockAdjustmentForItem(${item.id})" style="margin-right: 5px;" title="Adjust Stock (Damaged/Free)">
+                                    <i class="fas fa-exclamation-triangle"></i>
+                                </button>
+                                ` : ''}
+                                <button class="btn btn-danger btn-small" onclick="businessManager.deleteItem('inventory', ${item.id})" title="Delete Item">
                                     <i class="fas fa-trash"></i>
                                 </button>
                             </td>
@@ -1287,6 +1331,24 @@ class BusinessManager {
         this.openModal('editInventoryModal');
     }
 
+    openStockAdjustmentForItem(itemId) {
+        // Populate the adjustment form with the selected item
+        this.populateAdjustmentInventoryDropdown();
+        document.getElementById('adjustmentInventoryItem').value = itemId;
+        
+        // Set default date to today
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('adjustmentDate').value = today;
+        
+        // Clear other fields
+        document.getElementById('adjustmentQuantity').value = '';
+        document.getElementById('adjustmentReason').value = '';
+        document.getElementById('adjustmentNotes').value = '';
+        
+        // Open the modal
+        this.openModal('stockAdjustmentModal');
+    }
+
     populateInventoryDropdown() {
         const dropdown = document.getElementById('saleInventoryItem');
         if (!dropdown) return;
@@ -1407,6 +1469,64 @@ class BusinessManager {
         }, 3000);
     }
 
+    populateAdjustmentInventoryDropdown() {
+        const dropdown = document.getElementById('adjustmentInventoryItem');
+        if (!dropdown) return;
+
+        // Clear existing options except the first one
+        dropdown.innerHTML = '<option value="">Select Item</option>';
+
+        // Filter and sort inventory items (only show items with stock)
+        const availableItems = this.inventory
+            .filter(item => item.current_stock > 0)
+            .sort((a, b) => {
+                // Sort by stock level (lowest first) then by name
+                if (a.current_stock <= a.min_stock && b.current_stock > b.min_stock) return -1;
+                if (a.current_stock > a.min_stock && b.current_stock <= b.min_stock) return 1;
+                return a.name.localeCompare(b.name);
+            });
+
+        // Add inventory items with enhanced display
+        availableItems.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.id;
+            
+            // Create visual indicators for stock status
+            let stockIndicator = '';
+            
+            if (item.current_stock <= item.min_stock) {
+                stockIndicator = ' 🔴 LOW STOCK';
+            } else if (item.current_stock <= item.min_stock * 2) {
+                stockIndicator = ' 🟡 MEDIUM STOCK';
+            } else {
+                stockIndicator = ' 🟢 GOOD STOCK';
+            }
+            
+            option.textContent = `${item.name} (${item.current_stock} units)${stockIndicator}`;
+            dropdown.appendChild(option);
+        });
+
+        // Show out-of-stock items as disabled options
+        const outOfStockItems = this.inventory.filter(item => item.current_stock === 0);
+        if (outOfStockItems.length > 0 && availableItems.length > 0) {
+            const separator = document.createElement('option');
+            separator.disabled = true;
+            separator.textContent = '───────────────';
+            dropdown.appendChild(separator);
+        }
+
+        if (outOfStockItems.length > 0) {
+            outOfStockItems.forEach(item => {
+                const option = document.createElement('option');
+                option.value = '';
+                option.disabled = true;
+                option.textContent = `${item.name} (OUT OF STOCK)`;
+                option.style.cssText = 'color: #a0aec0; font-style: italic;';
+                dropdown.appendChild(option);
+            });
+        }
+    }
+
     // Modal Functions
     openModal(modalId) {
         document.getElementById(modalId).style.display = 'block';
@@ -1415,6 +1535,14 @@ class BusinessManager {
         // Refresh inventory dropdown when sales modal is opened
         if (modalId === 'salesModal') {
             this.populateInventoryDropdown();
+        }
+        
+        // Refresh inventory dropdown when stock adjustment modal is opened
+        if (modalId === 'stockAdjustmentModal') {
+            this.populateAdjustmentInventoryDropdown();
+            // Set default date to today
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('adjustmentDate').value = today;
         }
     }
 

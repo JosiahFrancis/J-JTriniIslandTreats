@@ -73,6 +73,18 @@ function initializeDatabase() {
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`);
 
+        // Stock adjustments table for tracking damaged stock and free giveaways
+        db.run(`CREATE TABLE IF NOT EXISTS stock_adjustments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            inventory_item_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (inventory_item_id) REFERENCES inventory (id)
+        )`);
+
         // Add new columns to sales table if they don't exist (for existing databases)
         db.run(`ALTER TABLE sales ADD COLUMN inventory_item_id INTEGER`, (err) => {
             // Ignore error if column already exists
@@ -726,6 +738,116 @@ app.put('/api/inventory/:id/stock', (req, res) => {
                 });
             }
         );
+    });
+});
+
+// Stock adjustments API (for damaged stock and free giveaways)
+app.post('/api/inventory/adjustments', (req, res) => {
+    const { inventoryItemId, date, quantity, reason, notes } = req.body;
+    
+    if (!inventoryItemId || !date || !quantity || !reason) {
+        res.status(400).json({ error: 'Missing required fields' });
+        return;
+    }
+
+    if (quantity <= 0) {
+        res.status(400).json({ error: 'Quantity must be greater than 0' });
+        return;
+    }
+
+    if (!['damaged', 'free_giveaway'].includes(reason)) {
+        res.status(400).json({ error: 'Reason must be "damaged" or "free_giveaway"' });
+        return;
+    }
+
+    // Start a transaction
+    db.serialize(() => {
+        db.run('BEGIN TRANSACTION');
+
+        // First check if the inventory item exists and has enough stock
+        db.get('SELECT current_stock FROM inventory WHERE id = ?', [inventoryItemId], (err, row) => {
+            if (err) {
+                db.run('ROLLBACK');
+                res.status(500).json({ error: err.message });
+                return;
+            }
+
+            if (!row) {
+                db.run('ROLLBACK');
+                res.status(404).json({ error: 'Inventory item not found' });
+                return;
+            }
+
+            const currentStock = row.current_stock;
+            const newStock = currentStock - quantity;
+
+            if (newStock < 0) {
+                db.run('ROLLBACK');
+                res.status(400).json({ error: `Insufficient stock. Available: ${currentStock}` });
+                return;
+            }
+
+            // Record the adjustment
+            db.run(
+                'INSERT INTO stock_adjustments (inventory_item_id, date, quantity, reason, notes) VALUES (?, ?, ?, ?, ?)',
+                [inventoryItemId, date, quantity, reason, notes || null],
+                function(err) {
+                    if (err) {
+                        db.run('ROLLBACK');
+                        res.status(500).json({ error: err.message });
+                        return;
+                    }
+
+                    // Update inventory stock
+                    db.run(
+                        'UPDATE inventory SET current_stock = ?, total_value = current_stock * unit_cost, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                        [newStock, inventoryItemId],
+                        function(err) {
+                            if (err) {
+                                db.run('ROLLBACK');
+                                res.status(500).json({ error: err.message });
+                                return;
+                            }
+
+                            db.run('COMMIT');
+                            res.json({
+                                message: 'Stock adjustment recorded successfully',
+                                adjustmentId: this.lastID,
+                                newStock: newStock,
+                                reason: reason
+                            });
+                        }
+                    );
+                }
+            );
+        });
+    });
+});
+
+// Get stock adjustments
+app.get('/api/inventory/adjustments', (req, res) => {
+    const { inventoryItemId } = req.query;
+    
+    let query = `
+        SELECT sa.*, i.name as item_name 
+        FROM stock_adjustments sa
+        JOIN inventory i ON sa.inventory_item_id = i.id
+    `;
+    const params = [];
+    
+    if (inventoryItemId) {
+        query += ' WHERE sa.inventory_item_id = ?';
+        params.push(inventoryItemId);
+    }
+    
+    query += ' ORDER BY sa.date DESC, sa.created_at DESC';
+    
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
     });
 });
 
