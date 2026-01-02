@@ -967,6 +967,304 @@ app.post('/api/inventory/repair', (req, res) => {
     });
 });
 
+// Reports API
+app.get('/api/reports/sales', (req, res) => {
+    const { period, year, month } = req.query;
+    
+    let dateFilter = '';
+    const params = [];
+    
+    if (period === 'yearly' && year) {
+        dateFilter = "WHERE strftime('%Y', date) = ?";
+        params.push(year);
+    } else if (period === 'monthly' && year && month) {
+        dateFilter = "WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ?";
+        params.push(year, String(month).padStart(2, '0'));
+    } else if (period === 'weekly') {
+        // Get current week
+        const now = new Date();
+        const startOfWeek = new Date(now.setDate(now.getDate() - now.getDay()));
+        const endOfWeek = new Date(now.setDate(now.getDate() - now.getDay() + 6));
+        dateFilter = "WHERE date >= ? AND date <= ?";
+        params.push(startOfWeek.toISOString().split('T')[0], endOfWeek.toISOString().split('T')[0]);
+    } else if (period === 'daily' && year && month) {
+        dateFilter = "WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ?";
+        params.push(year, String(month).padStart(2, '0'));
+    }
+    
+    let groupBy = '';
+    if (period === 'daily') {
+        groupBy = "GROUP BY date ORDER BY date";
+    } else if (period === 'weekly') {
+        groupBy = "GROUP BY date ORDER BY date";
+    } else if (period === 'monthly') {
+        groupBy = "GROUP BY strftime('%m', date) ORDER BY strftime('%m', date)";
+    } else if (period === 'yearly') {
+        groupBy = "GROUP BY strftime('%Y', date) ORDER BY strftime('%Y', date)";
+    }
+    
+    const query = `
+        SELECT 
+            ${period === 'daily' ? 'date as period' : period === 'weekly' ? 'date as period' : period === 'monthly' ? "strftime('%m', date) as period" : "strftime('%Y', date) as period"},
+            COUNT(*) as transaction_count,
+            SUM(quantity) as total_quantity,
+            SUM(total) as total_sales,
+            AVG(total) as avg_sale
+        FROM sales
+        ${dateFilter}
+        ${groupBy}
+    `;
+    
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+app.get('/api/reports/best-selling', (req, res) => {
+    const { limit = 10, year, month } = req.query;
+    
+    let dateFilter = '';
+    const params = [];
+    
+    if (year && month) {
+        dateFilter = "WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ?";
+        params.push(year, String(month).padStart(2, '0'));
+    } else if (year) {
+        dateFilter = "WHERE strftime('%Y', date) = ?";
+        params.push(year);
+    }
+    
+    const query = `
+        SELECT 
+            item,
+            SUM(quantity) as total_quantity,
+            SUM(total) as total_revenue,
+            COUNT(*) as transaction_count,
+            AVG(price) as avg_price
+        FROM sales
+        ${dateFilter}
+        GROUP BY item
+        ORDER BY total_quantity DESC
+        LIMIT ?
+    `;
+    
+    params.push(parseInt(limit));
+    
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+app.get('/api/reports/expenses', (req, res) => {
+    const { period, year, month } = req.query;
+    
+    let dateFilter = '';
+    const params = [];
+    
+    if (period === 'yearly' && year) {
+        dateFilter = "WHERE strftime('%Y', date) = ?";
+        params.push(year);
+    } else if (period === 'monthly' && year && month) {
+        dateFilter = "WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ?";
+        params.push(year, String(month).padStart(2, '0'));
+    } else if (period === 'weekly') {
+        const now = new Date();
+        const startOfWeek = new Date(now.setDate(now.getDate() - now.getDay()));
+        const endOfWeek = new Date(now.setDate(now.getDate() - now.getDay() + 6));
+        dateFilter = "WHERE date >= ? AND date <= ?";
+        params.push(startOfWeek.toISOString().split('T')[0], endOfWeek.toISOString().split('T')[0]);
+    } else if (period === 'daily' && year && month) {
+        dateFilter = "WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ?";
+        params.push(year, String(month).padStart(2, '0'));
+    }
+    
+    let groupBy = '';
+    if (period === 'daily') {
+        groupBy = "GROUP BY date, category ORDER BY date, category";
+    } else if (period === 'weekly') {
+        groupBy = "GROUP BY date, category ORDER BY date, category";
+    } else if (period === 'monthly') {
+        groupBy = "GROUP BY strftime('%m', date), category ORDER BY strftime('%m', date), category";
+    } else if (period === 'yearly') {
+        groupBy = "GROUP BY strftime('%Y', date), category ORDER BY strftime('%Y', date), category";
+    }
+    
+    const query = `
+        SELECT 
+            ${period === 'daily' ? 'date as period' : period === 'weekly' ? 'date as period' : period === 'monthly' ? "strftime('%m', date) as period" : "strftime('%Y', date) as period"},
+            category,
+            SUM(amount) as total_amount,
+            COUNT(*) as transaction_count
+        FROM expenses
+        ${dateFilter}
+        ${groupBy}
+    `;
+    
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+app.get('/api/reports/profit-margin', (req, res) => {
+    const { year, month } = req.query;
+    
+    let dateFilter = '';
+    const params = [];
+    
+    if (year && month) {
+        dateFilter = "WHERE strftime('%Y', s.date) = ? AND strftime('%m', s.date) = ?";
+        params.push(year, String(month).padStart(2, '0'));
+    } else if (year) {
+        dateFilter = "WHERE strftime('%Y', s.date) = ?";
+        params.push(year);
+    }
+    
+    // Get sales with inventory costs if linked
+    const query = `
+        SELECT 
+            s.item,
+            SUM(s.quantity) as total_quantity,
+            SUM(s.total) as total_revenue,
+            AVG(s.price) as avg_selling_price,
+            CASE 
+                WHEN s.inventory_item_id IS NOT NULL THEN
+                    SUM(s.inventory_quantity * i.unit_cost)
+                ELSE 0
+            END as total_cost,
+            COUNT(*) as transaction_count
+        FROM sales s
+        LEFT JOIN inventory i ON s.inventory_item_id = i.id
+        ${dateFilter}
+        GROUP BY s.item
+        ORDER BY total_revenue DESC
+    `;
+    
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        
+        // Calculate profit margins
+        const results = rows.map(row => {
+            const revenue = row.total_revenue || 0;
+            const cost = row.total_cost || 0;
+            const profit = revenue - cost;
+            const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
+            
+            return {
+                ...row,
+                total_cost: cost,
+                profit: profit,
+                margin: margin
+            };
+        });
+        
+        res.json(results);
+    });
+});
+
+app.get('/api/reports/year-over-year', (req, res) => {
+    const { year } = req.query;
+    const currentYear = year || new Date().getFullYear();
+    const previousYear = currentYear - 1;
+    
+    // Get sales for both years
+    const salesQuery = `
+        SELECT 
+            strftime('%Y', date) as year,
+            strftime('%m', date) as month,
+            SUM(total) as total_sales,
+            COUNT(*) as transaction_count
+        FROM sales
+        WHERE strftime('%Y', date) IN (?, ?)
+        GROUP BY year, month
+        ORDER BY year, month
+    `;
+    
+    // Get expenses for both years
+    const expensesQuery = `
+        SELECT 
+            strftime('%Y', date) as year,
+            strftime('%m', date) as month,
+            SUM(amount) as total_expenses,
+            COUNT(*) as transaction_count
+        FROM expenses
+        WHERE strftime('%Y', date) IN (?, ?)
+        GROUP BY year, month
+        ORDER BY year, month
+    `;
+    
+    db.all(salesQuery, [currentYear.toString(), previousYear.toString()], (err, salesRows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        
+        db.all(expensesQuery, [currentYear.toString(), previousYear.toString()], (err, expensesRows) => {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            
+            // Calculate totals
+            const currentYearSales = salesRows
+                .filter(r => r.year === currentYear.toString())
+                .reduce((sum, r) => sum + (r.total_sales || 0), 0);
+            const previousYearSales = salesRows
+                .filter(r => r.year === previousYear.toString())
+                .reduce((sum, r) => sum + (r.total_sales || 0), 0);
+            
+            const currentYearExpenses = expensesRows
+                .filter(r => r.year === currentYear.toString())
+                .reduce((sum, r) => sum + (r.total_expenses || 0), 0);
+            const previousYearExpenses = expensesRows
+                .filter(r => r.year === previousYear.toString())
+                .reduce((sum, r) => sum + (r.total_expenses || 0), 0);
+            
+            const currentYearProfit = currentYearSales - currentYearExpenses;
+            const previousYearProfit = previousYearSales - previousYearExpenses;
+            
+            res.json({
+                currentYear: currentYear,
+                previousYear: previousYear,
+                sales: {
+                    current: currentYearSales,
+                    previous: previousYearSales,
+                    change: currentYearSales - previousYearSales,
+                    changePercent: previousYearSales > 0 ? ((currentYearSales - previousYearSales) / previousYearSales) * 100 : 0,
+                    monthly: salesRows
+                },
+                expenses: {
+                    current: currentYearExpenses,
+                    previous: previousYearExpenses,
+                    change: currentYearExpenses - previousYearExpenses,
+                    changePercent: previousYearExpenses > 0 ? ((currentYearExpenses - previousYearExpenses) / previousYearExpenses) * 100 : 0,
+                    monthly: expensesRows
+                },
+                profit: {
+                    current: currentYearProfit,
+                    previous: previousYearProfit,
+                    change: currentYearProfit - previousYearProfit,
+                    changePercent: previousYearProfit !== 0 ? ((currentYearProfit - previousYearProfit) / Math.abs(previousYearProfit)) * 100 : 0
+                }
+            });
+        });
+    });
+});
+
 // Settings API (for bank balance and other settings)
 app.get('/api/settings/:key', (req, res) => {
     const key = req.params.key;

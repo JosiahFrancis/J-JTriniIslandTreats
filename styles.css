@@ -746,6 +746,63 @@ form {
     color: #667eea;
 }
 
+/* Reports Section */
+.report-section {
+    background: white;
+    border-radius: 12px;
+    padding: 25px;
+    margin-bottom: 25px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+.report-section h3 {
+    color: #4a5568;
+    font-size: 1.5rem;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #e2e8f0;
+}
+
+.report-section h3 i {
+    margin-right: 10px;
+    color: #667eea;
+}
+
+.report-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.report-card {
+    background: #f7fafc;
+    border-radius: 8px;
+    padding: 20px;
+    border: 1px solid #e2e8f0;
+}
+
+.report-card h4 {
+    color: #4a5568;
+    font-size: 1.1rem;
+    margin: 0 0 15px 0;
+    font-weight: 600;
+}
+
+.report-card canvas {
+    max-height: 300px;
+}
+
+@media (max-width: 768px) {
+    .report-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .report-card canvas {
+        max-height: 250px;
+    }
+}
+
 /* Loading Animation */
 .loading {
     display: inline-block;

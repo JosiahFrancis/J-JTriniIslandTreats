@@ -18,6 +18,9 @@ class BusinessManager {
         this.expensesPageSize = 10;
         this.expensesFiltered = null; // null = use full list
 
+        // Reports state
+        this.reportCharts = {};
+
         this.init();
     }
 
@@ -28,6 +31,7 @@ class BusinessManager {
         this.updateDashboard();
         this.renderAllTables();
         this.setDefaultDates();
+        this.initReports();
     }
 
     setupEventListeners() {
@@ -1640,6 +1644,957 @@ class BusinessManager {
                 option.style.cssText = 'color: #a0aec0; font-style: italic;';
                 dropdown.appendChild(option);
             });
+        }
+    }
+
+    // Reports Functions
+    initReports() {
+        const now = new Date();
+        const monthPicker = document.getElementById('reportMonthPicker');
+        if (monthPicker) {
+            monthPicker.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        }
+    }
+
+    async updateReports() {
+        const period = document.getElementById('reportPeriod')?.value || 'monthly';
+        const monthPicker = document.getElementById('reportMonthPicker');
+        const [year, month] = monthPicker?.value ? monthPicker.value.split('-') : [new Date().getFullYear(), new Date().getMonth() + 1];
+        
+        await Promise.all([
+            this.renderSalesReport(period, year, month),
+            this.renderBestSellingItems(period, year, month),
+            this.renderExpenseReports(period, year, month),
+            this.renderProfitMarginReport(period, year, month),
+            this.renderYearOverYearReport(year)
+        ]);
+    }
+
+    async renderSalesReport(period, year, month) {
+        try {
+            const data = await this.apiRequest(`/reports/sales?period=${period}&year=${year}&month=${month}`);
+            
+            // Sales Summary
+            const totalSales = data.reduce((sum, r) => sum + (r.total_sales || 0), 0);
+            const totalTransactions = data.reduce((sum, r) => sum + (r.transaction_count || 0), 0);
+            const totalQuantity = data.reduce((sum, r) => sum + (r.total_quantity || 0), 0);
+            const avgSale = totalTransactions > 0 ? totalSales / totalTransactions : 0;
+            
+            document.getElementById('salesSummaryReport').innerHTML = `
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-top: 15px;">
+                    <div>
+                        <div style="color: #718096; font-size: 0.9rem;">Total Sales</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: #667eea;">${this.formatCurrency(totalSales)}</div>
+                    </div>
+                    <div>
+                        <div style="color: #718096; font-size: 0.9rem;">Transactions</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: #4a5568;">${totalTransactions}</div>
+                    </div>
+                    <div>
+                        <div style="color: #718096; font-size: 0.9rem;">Total Quantity</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: #4a5568;">${totalQuantity}</div>
+                    </div>
+                    <div>
+                        <div style="color: #718096; font-size: 0.9rem;">Avg Sale</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: #4a5568;">${this.formatCurrency(avgSale)}</div>
+                    </div>
+                </div>
+            `;
+            
+            // Sales Trend Chart
+            const ctx = document.getElementById('salesTrendChart');
+            if (ctx) {
+                if (this.reportCharts.salesTrend) {
+                    this.reportCharts.salesTrend.destroy();
+                }
+                
+                const labels = data.map(r => {
+                    if (period === 'daily') return r.period;
+                    if (period === 'weekly') return r.period;
+                    if (period === 'monthly') {
+                        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                        return monthNames[parseInt(r.period) - 1];
+                    }
+                    return r.period;
+                });
+                
+                this.reportCharts.salesTrend = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Sales',
+                            data: data.map(r => r.total_sales || 0),
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + value.toFixed(0);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        } catch (error) {
+            console.error('Failed to load sales report:', error);
+        }
+    }
+
+    async renderBestSellingItems(period, year, month) {
+        try {
+            // Build query based on period
+            let query = '/reports/best-selling?limit=10';
+            if (period === 'yearly') {
+                query += `&year=${year}`;
+            } else if (period === 'monthly' || period === 'daily' || period === 'weekly') {
+                query += `&year=${year}&month=${month}`;
+            }
+            
+            const data = await this.apiRequest(query);
+            
+            let html = '<table style="width: 100%; margin-top: 15px; border-collapse: collapse;">';
+            html += '<thead><tr style="background: #f7fafc; border-bottom: 2px solid #e2e8f0;">';
+            html += '<th style="padding: 12px; text-align: left;">Rank</th>';
+            html += '<th style="padding: 12px; text-align: left;">Item</th>';
+            html += '<th style="padding: 12px; text-align: right;">Quantity</th>';
+            html += '<th style="padding: 12px; text-align: right;">Revenue</th>';
+            html += '<th style="padding: 12px; text-align: right;">Avg Price</th>';
+            html += '</tr></thead><tbody>';
+            
+            data.forEach((item, index) => {
+                html += `<tr style="border-bottom: 1px solid #e2e8f0;">`;
+                html += `<td style="padding: 12px; font-weight: 600; color: #667eea;">#${index + 1}</td>`;
+                html += `<td style="padding: 12px;">${item.item}</td>`;
+                html += `<td style="padding: 12px; text-align: right;">${item.total_quantity}</td>`;
+                html += `<td style="padding: 12px; text-align: right; font-weight: 600;">${this.formatCurrency(item.total_revenue)}</td>`;
+                html += `<td style="padding: 12px; text-align: right;">${this.formatCurrency(item.avg_price)}</td>`;
+                html += `</tr>`;
+            });
+            
+            html += '</tbody></table>';
+            document.getElementById('bestSellingItemsReport').innerHTML = html;
+        } catch (error) {
+            console.error('Failed to load best selling items:', error);
+        }
+    }
+
+    async renderExpenseReports(period, year, month) {
+        try {
+            const data = await this.apiRequest(`/reports/expenses?period=${period}&year=${year}&month=${month}`);
+            
+            // Group by category
+            const categoryTotals = {};
+            data.forEach(row => {
+                if (!categoryTotals[row.category]) {
+                    categoryTotals[row.category] = 0;
+                }
+                categoryTotals[row.category] += row.total_amount || 0;
+            });
+            
+            // Expense Category Pie Chart
+            const ctx1 = document.getElementById('expenseCategoryChart');
+            if (ctx1) {
+                if (this.reportCharts.expenseCategory) {
+                    this.reportCharts.expenseCategory.destroy();
+                }
+                
+                const categories = Object.keys(categoryTotals);
+                const colors = ['#667eea', '#764ba2', '#f093fb', '#4facfe', '#00f2fe', '#43e97b', '#fa709a'];
+                
+                this.reportCharts.expenseCategory = new Chart(ctx1, {
+                    type: 'pie',
+                    data: {
+                        labels: categories.map(c => this.capitalizeFirst(c)),
+                        datasets: [{
+                            data: categories.map(c => categoryTotals[c]),
+                            backgroundColor: colors.slice(0, categories.length)
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                position: 'right'
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Expense Trend Chart
+            const ctx2 = document.getElementById('expenseTrendChart');
+            if (ctx2) {
+                if (this.reportCharts.expenseTrend) {
+                    this.reportCharts.expenseTrend.destroy();
+                }
+                
+                // Group by period
+                const periodTotals = {};
+                data.forEach(row => {
+                    if (!periodTotals[row.period]) {
+                        periodTotals[row.period] = 0;
+                    }
+                    periodTotals[row.period] += row.total_amount || 0;
+                });
+                
+                const periods = Object.keys(periodTotals).sort();
+                const labels = periods.map(p => {
+                    if (period === 'daily') return p;
+                    if (period === 'monthly') {
+                        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                        return monthNames[parseInt(p) - 1];
+                    }
+                    return p;
+                });
+                
+                this.reportCharts.expenseTrend = new Chart(ctx2, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Expenses',
+                            data: periods.map(p => periodTotals[p]),
+                            backgroundColor: '#e53e3e',
+                            borderColor: '#c53030',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + value.toFixed(0);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Category Breakdown Table
+            let html = '<table style="width: 100%; margin-top: 15px; border-collapse: collapse;">';
+            html += '<thead><tr style="background: #f7fafc; border-bottom: 2px solid #e2e8f0;">';
+            html += '<th style="padding: 12px; text-align: left;">Category</th>';
+            html += '<th style="padding: 12px; text-align: right;">Total Amount</th>';
+            html += '<th style="padding: 12px; text-align: right;">Transactions</th>';
+            html += '<th style="padding: 12px; text-align: right;">Percentage</th>';
+            html += '</tr></thead><tbody>';
+            
+            const totalExpenses = Object.values(categoryTotals).reduce((sum, val) => sum + val, 0);
+            const sortedCategories = Object.entries(categoryTotals)
+                .sort((a, b) => b[1] - a[1]);
+            
+            sortedCategories.forEach(([category, amount]) => {
+                const percentage = totalExpenses > 0 ? (amount / totalExpenses * 100).toFixed(1) : 0;
+                html += `<tr style="border-bottom: 1px solid #e2e8f0;">`;
+                html += `<td style="padding: 12px;">${this.capitalizeFirst(category)}</td>`;
+                html += `<td style="padding: 12px; text-align: right; font-weight: 600;">${this.formatCurrency(amount)}</td>`;
+                html += `<td style="padding: 12px; text-align: right;">${data.filter(r => r.category === category).reduce((sum, r) => sum + (r.transaction_count || 0), 0)}</td>`;
+                html += `<td style="padding: 12px; text-align: right;">${percentage}%</td>`;
+                html += `</tr>`;
+            });
+            
+            html += '</tbody></table>';
+            document.getElementById('expenseCategoryReport').innerHTML = html;
+        } catch (error) {
+            console.error('Failed to load expense reports:', error);
+        }
+    }
+
+    async renderProfitMarginReport(period, year, month) {
+        try {
+            // Build query based on period
+            let query = '/reports/profit-margin?';
+            if (period === 'yearly') {
+                query += `year=${year}`;
+            } else if (period === 'monthly' || period === 'daily' || period === 'weekly') {
+                query += `year=${year}&month=${month}`;
+            }
+            
+            const data = await this.apiRequest(query);
+            
+            let html = '<table style="width: 100%; margin-top: 15px; border-collapse: collapse;">';
+            html += '<thead><tr style="background: #f7fafc; border-bottom: 2px solid #e2e8f0;">';
+            html += '<th style="padding: 12px; text-align: left;">Item</th>';
+            html += '<th style="padding: 12px; text-align: right;">Revenue</th>';
+            html += '<th style="padding: 12px; text-align: right;">Cost</th>';
+            html += '<th style="padding: 12px; text-align: right;">Profit</th>';
+            html += '<th style="padding: 12px; text-align: right;">Margin %</th>';
+            html += '</tr></thead><tbody>';
+            
+            data.forEach(item => {
+                const marginColor = item.margin >= 50 ? '#38a169' : item.margin >= 25 ? '#d69e2e' : '#e53e3e';
+                html += `<tr style="border-bottom: 1px solid #e2e8f0;">`;
+                html += `<td style="padding: 12px;">${item.item}</td>`;
+                html += `<td style="padding: 12px; text-align: right;">${this.formatCurrency(item.total_revenue)}</td>`;
+                html += `<td style="padding: 12px; text-align: right;">${this.formatCurrency(item.total_cost)}</td>`;
+                html += `<td style="padding: 12px; text-align: right; font-weight: 600; color: ${marginColor};">${this.formatCurrency(item.profit)}</td>`;
+                html += `<td style="padding: 12px; text-align: right; font-weight: 600; color: ${marginColor};">${item.margin.toFixed(1)}%</td>`;
+                html += `</tr>`;
+            });
+            
+            html += '</tbody></table>';
+            document.getElementById('profitMarginReport').innerHTML = html;
+        } catch (error) {
+            console.error('Failed to load profit margin report:', error);
+        }
+    }
+
+    async renderYearOverYearReport(year) {
+        try {
+            const data = await this.apiRequest(`/reports/year-over-year?year=${year}`);
+            
+            // Sales Comparison Chart
+            const ctx1 = document.getElementById('yoySalesChart');
+            if (ctx1) {
+                if (this.reportCharts.yoySales) {
+                    this.reportCharts.yoySales.destroy();
+                }
+                
+                const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                const currentYearData = new Array(12).fill(0);
+                const previousYearData = new Array(12).fill(0);
+                
+                data.sales.monthly.forEach(row => {
+                    const monthIndex = parseInt(row.month) - 1;
+                    if (row.year === data.currentYear.toString()) {
+                        currentYearData[monthIndex] = row.total_sales || 0;
+                    } else {
+                        previousYearData[monthIndex] = row.total_sales || 0;
+                    }
+                });
+                
+                this.reportCharts.yoySales = new Chart(ctx1, {
+                    type: 'line',
+                    data: {
+                        labels: monthNames,
+                        datasets: [{
+                            label: `${data.currentYear} Sales`,
+                            data: currentYearData,
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            tension: 0.4
+                        }, {
+                            label: `${data.previousYear} Sales`,
+                            data: previousYearData,
+                            borderColor: '#a0aec0',
+                            backgroundColor: 'rgba(160, 174, 192, 0.1)',
+                            tension: 0.4,
+                            borderDash: [5, 5]
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + value.toFixed(0);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Expenses Comparison Chart
+            const ctx2 = document.getElementById('yoyExpensesChart');
+            if (ctx2) {
+                if (this.reportCharts.yoyExpenses) {
+                    this.reportCharts.yoyExpenses.destroy();
+                }
+                
+                const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                const currentYearData = new Array(12).fill(0);
+                const previousYearData = new Array(12).fill(0);
+                
+                data.expenses.monthly.forEach(row => {
+                    const monthIndex = parseInt(row.month) - 1;
+                    if (row.year === data.currentYear.toString()) {
+                        currentYearData[monthIndex] = row.total_expenses || 0;
+                    } else {
+                        previousYearData[monthIndex] = row.total_expenses || 0;
+                    }
+                });
+                
+                this.reportCharts.yoyExpenses = new Chart(ctx2, {
+                    type: 'bar',
+                    data: {
+                        labels: monthNames,
+                        datasets: [{
+                            label: `${data.currentYear} Expenses`,
+                            data: currentYearData,
+                            backgroundColor: '#e53e3e',
+                            borderColor: '#c53030'
+                        }, {
+                            label: `${data.previousYear} Expenses`,
+                            data: previousYearData,
+                            backgroundColor: '#fc8181',
+                            borderColor: '#e53e3e'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + value.toFixed(0);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Summary Report
+            const salesChangeColor = data.sales.change >= 0 ? '#38a169' : '#e53e3e';
+            const expensesChangeColor = data.expenses.change >= 0 ? '#e53e3e' : '#38a169';
+            const profitChangeColor = data.profit.change >= 0 ? '#38a169' : '#e53e3e';
+            
+            document.getElementById('yoySummaryReport').innerHTML = `
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-top: 15px;">
+                    <div style="background: #f7fafc; padding: 20px; border-radius: 8px;">
+                        <h4 style="margin: 0 0 10px 0; color: #4a5568;">Sales</h4>
+                        <div style="font-size: 1.8rem; font-weight: 700; color: #667eea; margin-bottom: 10px;">
+                            ${this.formatCurrency(data.sales.current)}
+                        </div>
+                        <div style="color: #718096; font-size: 0.9rem;">
+                            ${data.previousYear}: ${this.formatCurrency(data.sales.previous)}
+                        </div>
+                        <div style="color: ${salesChangeColor}; font-weight: 600; margin-top: 5px;">
+                            ${data.sales.change >= 0 ? '+' : ''}${this.formatCurrency(data.sales.change)} 
+                            (${data.sales.changePercent >= 0 ? '+' : ''}${data.sales.changePercent.toFixed(1)}%)
+                        </div>
+                    </div>
+                    <div style="background: #f7fafc; padding: 20px; border-radius: 8px;">
+                        <h4 style="margin: 0 0 10px 0; color: #4a5568;">Expenses</h4>
+                        <div style="font-size: 1.8rem; font-weight: 700; color: #e53e3e; margin-bottom: 10px;">
+                            ${this.formatCurrency(data.expenses.current)}
+                        </div>
+                        <div style="color: #718096; font-size: 0.9rem;">
+                            ${data.previousYear}: ${this.formatCurrency(data.expenses.previous)}
+                        </div>
+                        <div style="color: ${expensesChangeColor}; font-weight: 600; margin-top: 5px;">
+                            ${data.expenses.change >= 0 ? '+' : ''}${this.formatCurrency(data.expenses.change)} 
+                            (${data.expenses.changePercent >= 0 ? '+' : ''}${data.expenses.changePercent.toFixed(1)}%)
+                        </div>
+                    </div>
+                    <div style="background: #f7fafc; padding: 20px; border-radius: 8px;">
+                        <h4 style="margin: 0 0 10px 0; color: #4a5568;">Profit</h4>
+                        <div style="font-size: 1.8rem; font-weight: 700; color: ${profitChangeColor}; margin-bottom: 10px;">
+                            ${this.formatCurrency(data.profit.current)}
+                        </div>
+                        <div style="color: #718096; font-size: 0.9rem;">
+                            ${data.previousYear}: ${this.formatCurrency(data.profit.previous)}
+                        </div>
+                        <div style="color: ${profitChangeColor}; font-weight: 600; margin-top: 5px;">
+                            ${data.profit.change >= 0 ? '+' : ''}${this.formatCurrency(data.profit.change)} 
+                            (${data.profit.changePercent >= 0 ? '+' : ''}${data.profit.changePercent.toFixed(1)}%)
+                        </div>
+                    </div>
+                </div>
+            `;
+        } catch (error) {
+            console.error('Failed to load year-over-year report:', error);
+        }
+    }
+
+    async renderSalesReport(period, year, month) {
+        try {
+            const data = await this.apiRequest(`/reports/sales?period=${period}&year=${year}&month=${month}`);
+            
+            // Sales Summary
+            const totalSales = data.reduce((sum, r) => sum + (r.total_sales || 0), 0);
+            const totalTransactions = data.reduce((sum, r) => sum + (r.transaction_count || 0), 0);
+            const totalQuantity = data.reduce((sum, r) => sum + (r.total_quantity || 0), 0);
+            const avgSale = totalTransactions > 0 ? totalSales / totalTransactions : 0;
+            
+            document.getElementById('salesSummaryReport').innerHTML = `
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-top: 15px;">
+                    <div>
+                        <div style="color: #718096; font-size: 0.9rem;">Total Sales</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: #667eea;">${this.formatCurrency(totalSales)}</div>
+                    </div>
+                    <div>
+                        <div style="color: #718096; font-size: 0.9rem;">Transactions</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: #4a5568;">${totalTransactions}</div>
+                    </div>
+                    <div>
+                        <div style="color: #718096; font-size: 0.9rem;">Total Quantity</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: #4a5568;">${totalQuantity}</div>
+                    </div>
+                    <div>
+                        <div style="color: #718096; font-size: 0.9rem;">Avg Sale</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: #4a5568;">${this.formatCurrency(avgSale)}</div>
+                    </div>
+                </div>
+            `;
+            
+            // Sales Trend Chart
+            const ctx = document.getElementById('salesTrendChart');
+            if (ctx) {
+                if (this.reportCharts.salesTrend) {
+                    this.reportCharts.salesTrend.destroy();
+                }
+                
+                const labels = data.map(r => {
+                    if (period === 'daily') return r.period;
+                    if (period === 'weekly') return r.period;
+                    if (period === 'monthly') {
+                        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                        return monthNames[parseInt(r.period) - 1];
+                    }
+                    return r.period;
+                });
+                
+                this.reportCharts.salesTrend = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Sales',
+                            data: data.map(r => r.total_sales || 0),
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + value.toFixed(0);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        } catch (error) {
+            console.error('Failed to load sales report:', error);
+        }
+    }
+
+    async renderBestSellingItems(period, year, month) {
+        try {
+            // Build query based on period
+            let query = '/reports/best-selling?limit=10';
+            if (period === 'yearly') {
+                query += `&year=${year}`;
+            } else if (period === 'monthly' || period === 'daily' || period === 'weekly') {
+                query += `&year=${year}&month=${month}`;
+            }
+            
+            const data = await this.apiRequest(query);
+            
+            let html = '<table style="width: 100%; margin-top: 15px; border-collapse: collapse;">';
+            html += '<thead><tr style="background: #f7fafc; border-bottom: 2px solid #e2e8f0;">';
+            html += '<th style="padding: 12px; text-align: left;">Rank</th>';
+            html += '<th style="padding: 12px; text-align: left;">Item</th>';
+            html += '<th style="padding: 12px; text-align: right;">Quantity</th>';
+            html += '<th style="padding: 12px; text-align: right;">Revenue</th>';
+            html += '<th style="padding: 12px; text-align: right;">Avg Price</th>';
+            html += '</tr></thead><tbody>';
+            
+            data.forEach((item, index) => {
+                html += `<tr style="border-bottom: 1px solid #e2e8f0;">`;
+                html += `<td style="padding: 12px; font-weight: 600; color: #667eea;">#${index + 1}</td>`;
+                html += `<td style="padding: 12px;">${item.item}</td>`;
+                html += `<td style="padding: 12px; text-align: right;">${item.total_quantity}</td>`;
+                html += `<td style="padding: 12px; text-align: right; font-weight: 600;">${this.formatCurrency(item.total_revenue)}</td>`;
+                html += `<td style="padding: 12px; text-align: right;">${this.formatCurrency(item.avg_price)}</td>`;
+                html += `</tr>`;
+            });
+            
+            html += '</tbody></table>';
+            document.getElementById('bestSellingItemsReport').innerHTML = html;
+        } catch (error) {
+            console.error('Failed to load best selling items:', error);
+        }
+    }
+
+    async renderExpenseReports(period, year, month) {
+        try {
+            const data = await this.apiRequest(`/reports/expenses?period=${period}&year=${year}&month=${month}`);
+            
+            // Group by category
+            const categoryTotals = {};
+            data.forEach(row => {
+                if (!categoryTotals[row.category]) {
+                    categoryTotals[row.category] = 0;
+                }
+                categoryTotals[row.category] += row.total_amount || 0;
+            });
+            
+            // Expense Category Pie Chart
+            const ctx1 = document.getElementById('expenseCategoryChart');
+            if (ctx1) {
+                if (this.reportCharts.expenseCategory) {
+                    this.reportCharts.expenseCategory.destroy();
+                }
+                
+                const categories = Object.keys(categoryTotals);
+                const colors = ['#667eea', '#764ba2', '#f093fb', '#4facfe', '#00f2fe', '#43e97b', '#fa709a'];
+                
+                this.reportCharts.expenseCategory = new Chart(ctx1, {
+                    type: 'pie',
+                    data: {
+                        labels: categories.map(c => this.capitalizeFirst(c)),
+                        datasets: [{
+                            data: categories.map(c => categoryTotals[c]),
+                            backgroundColor: colors.slice(0, categories.length)
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                position: 'right'
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Expense Trend Chart
+            const ctx2 = document.getElementById('expenseTrendChart');
+            if (ctx2) {
+                if (this.reportCharts.expenseTrend) {
+                    this.reportCharts.expenseTrend.destroy();
+                }
+                
+                // Group by period
+                const periodTotals = {};
+                data.forEach(row => {
+                    if (!periodTotals[row.period]) {
+                        periodTotals[row.period] = 0;
+                    }
+                    periodTotals[row.period] += row.total_amount || 0;
+                });
+                
+                const periods = Object.keys(periodTotals).sort();
+                const labels = periods.map(p => {
+                    if (period === 'daily') return p;
+                    if (period === 'monthly') {
+                        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                        return monthNames[parseInt(p) - 1];
+                    }
+                    return p;
+                });
+                
+                this.reportCharts.expenseTrend = new Chart(ctx2, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Expenses',
+                            data: periods.map(p => periodTotals[p]),
+                            backgroundColor: '#e53e3e',
+                            borderColor: '#c53030',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + value.toFixed(0);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Category Breakdown Table
+            let html = '<table style="width: 100%; margin-top: 15px; border-collapse: collapse;">';
+            html += '<thead><tr style="background: #f7fafc; border-bottom: 2px solid #e2e8f0;">';
+            html += '<th style="padding: 12px; text-align: left;">Category</th>';
+            html += '<th style="padding: 12px; text-align: right;">Total Amount</th>';
+            html += '<th style="padding: 12px; text-align: right;">Transactions</th>';
+            html += '<th style="padding: 12px; text-align: right;">Percentage</th>';
+            html += '</tr></thead><tbody>';
+            
+            const totalExpenses = Object.values(categoryTotals).reduce((sum, val) => sum + val, 0);
+            const sortedCategories = Object.entries(categoryTotals)
+                .sort((a, b) => b[1] - a[1]);
+            
+            sortedCategories.forEach(([category, amount]) => {
+                const percentage = totalExpenses > 0 ? (amount / totalExpenses * 100).toFixed(1) : 0;
+                html += `<tr style="border-bottom: 1px solid #e2e8f0;">`;
+                html += `<td style="padding: 12px;">${this.capitalizeFirst(category)}</td>`;
+                html += `<td style="padding: 12px; text-align: right; font-weight: 600;">${this.formatCurrency(amount)}</td>`;
+                html += `<td style="padding: 12px; text-align: right;">${data.filter(r => r.category === category).reduce((sum, r) => sum + (r.transaction_count || 0), 0)}</td>`;
+                html += `<td style="padding: 12px; text-align: right;">${percentage}%</td>`;
+                html += `</tr>`;
+            });
+            
+            html += '</tbody></table>';
+            document.getElementById('expenseCategoryReport').innerHTML = html;
+        } catch (error) {
+            console.error('Failed to load expense reports:', error);
+        }
+    }
+
+    async renderProfitMarginReport(period, year, month) {
+        try {
+            // Build query based on period
+            let query = '/reports/profit-margin?';
+            if (period === 'yearly') {
+                query += `year=${year}`;
+            } else if (period === 'monthly' || period === 'daily' || period === 'weekly') {
+                query += `year=${year}&month=${month}`;
+            }
+            
+            const data = await this.apiRequest(query);
+            
+            let html = '<table style="width: 100%; margin-top: 15px; border-collapse: collapse;">';
+            html += '<thead><tr style="background: #f7fafc; border-bottom: 2px solid #e2e8f0;">';
+            html += '<th style="padding: 12px; text-align: left;">Item</th>';
+            html += '<th style="padding: 12px; text-align: right;">Revenue</th>';
+            html += '<th style="padding: 12px; text-align: right;">Cost</th>';
+            html += '<th style="padding: 12px; text-align: right;">Profit</th>';
+            html += '<th style="padding: 12px; text-align: right;">Margin %</th>';
+            html += '</tr></thead><tbody>';
+            
+            data.forEach(item => {
+                const marginColor = item.margin >= 50 ? '#38a169' : item.margin >= 25 ? '#d69e2e' : '#e53e3e';
+                html += `<tr style="border-bottom: 1px solid #e2e8f0;">`;
+                html += `<td style="padding: 12px;">${item.item}</td>`;
+                html += `<td style="padding: 12px; text-align: right;">${this.formatCurrency(item.total_revenue)}</td>`;
+                html += `<td style="padding: 12px; text-align: right;">${this.formatCurrency(item.total_cost)}</td>`;
+                html += `<td style="padding: 12px; text-align: right; font-weight: 600; color: ${marginColor};">${this.formatCurrency(item.profit)}</td>`;
+                html += `<td style="padding: 12px; text-align: right; font-weight: 600; color: ${marginColor};">${item.margin.toFixed(1)}%</td>`;
+                html += `</tr>`;
+            });
+            
+            html += '</tbody></table>';
+            document.getElementById('profitMarginReport').innerHTML = html;
+        } catch (error) {
+            console.error('Failed to load profit margin report:', error);
+        }
+    }
+
+    async renderYearOverYearReport(year) {
+        try {
+            const data = await this.apiRequest(`/reports/year-over-year?year=${year}`);
+            
+            // Sales Comparison Chart
+            const ctx1 = document.getElementById('yoySalesChart');
+            if (ctx1) {
+                if (this.reportCharts.yoySales) {
+                    this.reportCharts.yoySales.destroy();
+                }
+                
+                const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                const currentYearData = new Array(12).fill(0);
+                const previousYearData = new Array(12).fill(0);
+                
+                data.sales.monthly.forEach(row => {
+                    const monthIndex = parseInt(row.month) - 1;
+                    if (row.year === data.currentYear.toString()) {
+                        currentYearData[monthIndex] = row.total_sales || 0;
+                    } else {
+                        previousYearData[monthIndex] = row.total_sales || 0;
+                    }
+                });
+                
+                this.reportCharts.yoySales = new Chart(ctx1, {
+                    type: 'line',
+                    data: {
+                        labels: monthNames,
+                        datasets: [{
+                            label: `${data.currentYear} Sales`,
+                            data: currentYearData,
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            tension: 0.4
+                        }, {
+                            label: `${data.previousYear} Sales`,
+                            data: previousYearData,
+                            borderColor: '#a0aec0',
+                            backgroundColor: 'rgba(160, 174, 192, 0.1)',
+                            tension: 0.4,
+                            borderDash: [5, 5]
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + value.toFixed(0);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Expenses Comparison Chart
+            const ctx2 = document.getElementById('yoyExpensesChart');
+            if (ctx2) {
+                if (this.reportCharts.yoyExpenses) {
+                    this.reportCharts.yoyExpenses.destroy();
+                }
+                
+                const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                const currentYearData = new Array(12).fill(0);
+                const previousYearData = new Array(12).fill(0);
+                
+                data.expenses.monthly.forEach(row => {
+                    const monthIndex = parseInt(row.month) - 1;
+                    if (row.year === data.currentYear.toString()) {
+                        currentYearData[monthIndex] = row.total_expenses || 0;
+                    } else {
+                        previousYearData[monthIndex] = row.total_expenses || 0;
+                    }
+                });
+                
+                this.reportCharts.yoyExpenses = new Chart(ctx2, {
+                    type: 'bar',
+                    data: {
+                        labels: monthNames,
+                        datasets: [{
+                            label: `${data.currentYear} Expenses`,
+                            data: currentYearData,
+                            backgroundColor: '#e53e3e',
+                            borderColor: '#c53030'
+                        }, {
+                            label: `${data.previousYear} Expenses`,
+                            data: previousYearData,
+                            backgroundColor: '#fc8181',
+                            borderColor: '#e53e3e'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + value.toFixed(0);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Summary Report
+            const salesChangeColor = data.sales.change >= 0 ? '#38a169' : '#e53e3e';
+            const expensesChangeColor = data.expenses.change >= 0 ? '#e53e3e' : '#38a169';
+            const profitChangeColor = data.profit.change >= 0 ? '#38a169' : '#e53e3e';
+            
+            document.getElementById('yoySummaryReport').innerHTML = `
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-top: 15px;">
+                    <div style="background: #f7fafc; padding: 20px; border-radius: 8px;">
+                        <h4 style="margin: 0 0 10px 0; color: #4a5568;">Sales</h4>
+                        <div style="font-size: 1.8rem; font-weight: 700; color: #667eea; margin-bottom: 10px;">
+                            ${this.formatCurrency(data.sales.current)}
+                        </div>
+                        <div style="color: #718096; font-size: 0.9rem;">
+                            ${data.previousYear}: ${this.formatCurrency(data.sales.previous)}
+                        </div>
+                        <div style="color: ${salesChangeColor}; font-weight: 600; margin-top: 5px;">
+                            ${data.sales.change >= 0 ? '+' : ''}${this.formatCurrency(data.sales.change)} 
+                            (${data.sales.changePercent >= 0 ? '+' : ''}${data.sales.changePercent.toFixed(1)}%)
+                        </div>
+                    </div>
+                    <div style="background: #f7fafc; padding: 20px; border-radius: 8px;">
+                        <h4 style="margin: 0 0 10px 0; color: #4a5568;">Expenses</h4>
+                        <div style="font-size: 1.8rem; font-weight: 700; color: #e53e3e; margin-bottom: 10px;">
+                            ${this.formatCurrency(data.expenses.current)}
+                        </div>
+                        <div style="color: #718096; font-size: 0.9rem;">
+                            ${data.previousYear}: ${this.formatCurrency(data.expenses.previous)}
+                        </div>
+                        <div style="color: ${expensesChangeColor}; font-weight: 600; margin-top: 5px;">
+                            ${data.expenses.change >= 0 ? '+' : ''}${this.formatCurrency(data.expenses.change)} 
+                            (${data.expenses.changePercent >= 0 ? '+' : ''}${data.expenses.changePercent.toFixed(1)}%)
+                        </div>
+                    </div>
+                    <div style="background: #f7fafc; padding: 20px; border-radius: 8px;">
+                        <h4 style="margin: 0 0 10px 0; color: #4a5568;">Profit</h4>
+                        <div style="font-size: 1.8rem; font-weight: 700; color: ${profitChangeColor}; margin-bottom: 10px;">
+                            ${this.formatCurrency(data.profit.current)}
+                        </div>
+                        <div style="color: #718096; font-size: 0.9rem;">
+                            ${data.previousYear}: ${this.formatCurrency(data.profit.previous)}
+                        </div>
+                        <div style="color: ${profitChangeColor}; font-weight: 600; margin-top: 5px;">
+                            ${data.profit.change >= 0 ? '+' : ''}${this.formatCurrency(data.profit.change)} 
+                            (${data.profit.changePercent >= 0 ? '+' : ''}${data.profit.changePercent.toFixed(1)}%)
+                        </div>
+                    </div>
+                </div>
+            `;
+        } catch (error) {
+            console.error('Failed to load year-over-year report:', error);
         }
     }
 
