@@ -783,6 +783,96 @@ class BusinessManager {
     renderInventoryTable() {
         const tbody = document.getElementById('inventoryTableBody');
         this.renderTable(tbody, this.inventory, 'inventory');
+        this.renderInventoryCategorySummary();
+    }
+
+    renderInventoryCategorySummary() {
+        const summaryContainer = document.getElementById('inventoryCategorySummary');
+        if (!summaryContainer) return;
+
+        if (!this.inventory || this.inventory.length === 0) {
+            summaryContainer.innerHTML = '';
+            return;
+        }
+
+        // Calculate totals by category
+        const categoryTotals = {};
+        let grandTotalValue = 0;
+        let grandTotalQuantity = 0;
+
+        this.inventory.forEach(item => {
+            const category = item.category || 'other';
+            const totalValue = item.total_value || (item.current_stock * item.unit_cost);
+            const quantity = item.current_stock || 0;
+
+            if (!categoryTotals[category]) {
+                categoryTotals[category] = {
+                    totalValue: 0,
+                    totalQuantity: 0,
+                    itemCount: 0
+                };
+            }
+
+            categoryTotals[category].totalValue += totalValue;
+            categoryTotals[category].totalQuantity += quantity;
+            categoryTotals[category].itemCount += 1;
+
+            grandTotalValue += totalValue;
+            grandTotalQuantity += quantity;
+        });
+
+        // Sort categories by total value (descending)
+        const sortedCategories = Object.entries(categoryTotals)
+            .sort((a, b) => b[1].totalValue - a[1].totalValue);
+
+        // Build summary HTML
+        let summaryHTML = '<div class="inventory-summary-card" style="grid-column: 1 / -1; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 12px; margin-bottom: 15px;">';
+        summaryHTML += '<h3 style="margin: 0 0 15px 0; font-size: 1.3rem; display: flex; align-items: center; gap: 10px;">';
+        summaryHTML += '<i class="fas fa-chart-pie"></i> Total Inventory Overview';
+        summaryHTML += '</h3>';
+        summaryHTML += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">';
+        summaryHTML += `<div><strong>Total Value:</strong><br><span style="font-size: 1.5rem; font-weight: 700;">${this.formatCurrency(grandTotalValue)}</span></div>`;
+        summaryHTML += `<div><strong>Total Quantity:</strong><br><span style="font-size: 1.5rem; font-weight: 700;">${grandTotalQuantity.toLocaleString()} units</span></div>`;
+        summaryHTML += `<div><strong>Total Items:</strong><br><span style="font-size: 1.5rem; font-weight: 700;">${this.inventory.length} items</span></div>`;
+        summaryHTML += '</div></div>';
+
+        // Add category cards
+        sortedCategories.forEach(([category, totals]) => {
+            const categoryName = this.capitalizeFirst(category);
+            const categoryIcon = this.getCategoryIcon(category);
+            summaryHTML += `
+                <div class="inventory-summary-card">
+                    <div class="summary-card-header">
+                        <h4>${categoryIcon} ${categoryName}</h4>
+                        <span class="item-count">${totals.itemCount} item${totals.itemCount !== 1 ? 's' : ''}</span>
+                    </div>
+                    <div class="summary-card-content">
+                        <div class="summary-value">
+                            <div class="summary-label">Total Value</div>
+                            <div class="summary-amount">${this.formatCurrency(totals.totalValue)}</div>
+                        </div>
+                        <div class="summary-quantity">
+                            <div class="summary-label">Total Quantity</div>
+                            <div class="summary-amount">${totals.totalQuantity.toLocaleString()} units</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+
+        summaryContainer.innerHTML = summaryHTML;
+    }
+
+    getCategoryIcon(category) {
+        const icons = {
+            'syrups': '🍯',
+            'toppings': '🍒',
+            'cups': '🥤',
+            'snow ice': '❄️',
+            'equipment': '⚙️',
+            'other': '📦'
+        };
+        return icons[category.toLowerCase()] || '📦';
     }
 
     renderAllTables() {
@@ -939,6 +1029,7 @@ class BusinessManager {
         }
 
         this.renderFilteredTable('inventoryTableBody', filteredInventory, 'inventory');
+        // Note: Summary always shows all inventory, not filtered
     }
 
     renderFilteredTable(tbodyId, filteredData, type) {
