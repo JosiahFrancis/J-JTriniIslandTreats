@@ -28,6 +28,9 @@
                 <button class="tab-btn" data-tab="reports">
                     <i class="fas fa-chart-bar"></i> Reports
                 </button>
+                <button class="tab-btn" data-tab="audit">
+                    <i class="fas fa-history"></i> Audit Log
+                </button>
             </nav>
         </header>
 
@@ -598,6 +601,47 @@
                 <h4>Year Over Year Summary</h4>
                 <div id="yoySummaryReport"></div>
             </div>
+        </div>
+    </div>
+
+    <!-- Audit Log Tab -->
+    <div id="audit" class="tab-content">
+        <div class="section-header">
+            <h2><i class="fas fa-history"></i> Audit Log</h2>
+            <div style="display: flex; gap: 10px;">
+                <select id="auditEntityFilter" onchange="businessManager.loadAuditLog()" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                    <option value="">All Types</option>
+                    <option value="sale">Sales</option>
+                    <option value="expense">Expenses</option>
+                    <option value="inventory">Inventory</option>
+                </select>
+                <select id="auditActionFilter" onchange="businessManager.loadAuditLog()" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                    <option value="">All Actions</option>
+                    <option value="CREATE">Created</option>
+                    <option value="STOCK_REDUCTION">Stock Reduced</option>
+                </select>
+                <input type="date" id="auditStartDate" onchange="businessManager.loadAuditLog()" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;" placeholder="Start Date">
+                <input type="date" id="auditEndDate" onchange="businessManager.loadAuditLog()" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;" placeholder="End Date">
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Action</th>
+                        <th>Type</th>
+                        <th>Description</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody id="auditLogTableBody">
+                    <tr class="no-data-row">
+                        <td colspan="5">Loading audit log...</td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
     </div>
 

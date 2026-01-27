@@ -38,7 +38,13 @@ class BusinessManager {
         // Tab switching
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                this.switchTab(e.currentTarget.dataset.tab);
+                const tab = e.currentTarget.dataset.tab;
+                this.switchTab(tab);
+                if (tab === 'reports') {
+                    this.updateReports();
+                } else if (tab === 'audit') {
+                    this.loadAuditLog();
+                }
             });
         });
 
@@ -2596,6 +2602,97 @@ class BusinessManager {
         } catch (error) {
             console.error('Failed to load year-over-year report:', error);
         }
+    }
+
+    // Audit Log Functions
+    async loadAuditLog() {
+        try {
+            const entityType = document.getElementById('auditEntityFilter')?.value || '';
+            const actionType = document.getElementById('auditActionFilter')?.value || '';
+            const startDate = document.getElementById('auditStartDate')?.value || '';
+            const endDate = document.getElementById('auditEndDate')?.value || '';
+            
+            let query = '/audit-log?limit=200';
+            if (entityType) query += `&entityType=${entityType}`;
+            if (actionType) query += `&actionType=${actionType}`;
+            if (startDate) query += `&startDate=${startDate}`;
+            if (endDate) query += `&endDate=${endDate}`;
+            
+            const data = await this.apiRequest(query);
+            this.renderAuditLog(data);
+        } catch (error) {
+            console.error('Failed to load audit log:', error);
+            document.getElementById('auditLogTableBody').innerHTML = 
+                '<tr class="no-data-row"><td colspan="5">Failed to load audit log</td></tr>';
+        }
+    }
+
+    renderAuditLog(data) {
+        const tbody = document.getElementById('auditLogTableBody');
+        if (!tbody) return;
+
+        if (data.length === 0) {
+            tbody.innerHTML = '<tr class="no-data-row"><td colspan="5">No audit log entries found</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = data.map(entry => {
+            const timestamp = new Date(entry.created_at).toLocaleString();
+            const actionIcon = this.getActionIcon(entry.action_type);
+            const typeColor = this.getEntityTypeColor(entry.entity_type);
+            
+            let details = '';
+            if (entry.old_value && entry.new_value) {
+                details = `<span style="color: #e53e3e;">${entry.old_value}</span> → <span style="color: #38a169;">${entry.new_value}</span>`;
+            } else if (entry.new_value) {
+                try {
+                    const newData = JSON.parse(entry.new_value);
+                    details = Object.entries(newData).map(([key, val]) => 
+                        `<strong>${key}:</strong> ${val}`
+                    ).join(', ');
+                } catch {
+                    details = entry.new_value;
+                }
+            }
+
+            return `
+                <tr>
+                    <td style="font-size: 0.9rem; color: #718096;">${timestamp}</td>
+                    <td>
+                        <span style="display: inline-flex; align-items: center; gap: 5px;">
+                            ${actionIcon}
+                            <span style="font-weight: 600; color: #4a5568;">${entry.action_type}</span>
+                        </span>
+                    </td>
+                    <td>
+                        <span style="padding: 4px 10px; border-radius: 12px; background: ${typeColor}; color: white; font-size: 0.85rem; font-weight: 600;">
+                            ${this.capitalizeFirst(entry.entity_type)}
+                        </span>
+                    </td>
+                    <td>${entry.description}</td>
+                    <td style="font-size: 0.9rem; color: #4a5568;">${details || '-'}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    getActionIcon(actionType) {
+        const icons = {
+            'CREATE': '<i class="fas fa-plus-circle" style="color: #38a169;"></i>',
+            'STOCK_REDUCTION': '<i class="fas fa-minus-circle" style="color: #e53e3e;"></i>',
+            'UPDATE': '<i class="fas fa-edit" style="color: #667eea;"></i>',
+            'DELETE': '<i class="fas fa-trash" style="color: #e53e3e;"></i>'
+        };
+        return icons[actionType] || '<i class="fas fa-circle" style="color: #718096;"></i>';
+    }
+
+    getEntityTypeColor(entityType) {
+        const colors = {
+            'sale': '#667eea',
+            'expense': '#e53e3e',
+            'inventory': '#d69e2e'
+        };
+        return colors[entityType] || '#718096';
     }
 
     // Modal Functions

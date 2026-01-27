@@ -85,6 +85,19 @@ function initializeDatabase() {
             FOREIGN KEY (inventory_item_id) REFERENCES inventory (id)
         )`);
 
+        // Audit log table for tracking all business activities
+        db.run(`CREATE TABLE IF NOT EXISTS audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_type TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_id INTEGER,
+            description TEXT NOT NULL,
+            user_action TEXT,
+            old_value TEXT,
+            new_value TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+
         // Add new columns to sales table if they don't exist (for existing databases)
         db.run(`ALTER TABLE sales ADD COLUMN inventory_item_id INTEGER`, (err) => {
             // Ignore error if column already exists
@@ -103,6 +116,19 @@ function initializeDatabase() {
 // Helper function to update timestamp
 function updateTimestamp(table, id) {
     db.run(`UPDATE ${table} SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [id]);
+}
+
+// Helper function to log audit entries
+function logAudit(actionType, entityType, entityId, description, userAction, oldValue, newValue) {
+    db.run(
+        'INSERT INTO audit_log (action_type, entity_type, entity_id, description, user_action, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [actionType, entityType, entityId, description, userAction || null, oldValue || null, newValue || null],
+        (err) => {
+            if (err) {
+                console.error('Failed to log audit entry:', err);
+            }
+        }
+    );
 }
 
 // API Routes
@@ -218,6 +244,21 @@ app.post('/api/sales', (req, res) => {
                                         return;
                                     }
 
+                                    // Log inventory stock reduction
+                                    db.get('SELECT name FROM inventory WHERE id = ?', [inventoryItemId], (err, invRow) => {
+                                        if (!err && invRow) {
+                                            logAudit(
+                                                'STOCK_REDUCTION',
+                                                'inventory',
+                                                inventoryItemId,
+                                                `Stock reduced for ${invRow.name}: ${currentStock} → ${newStock} (sold ${quantity} units)`,
+                                                'SALE',
+                                                currentStock.toString(),
+                                                newStock.toString()
+                                            );
+                                        }
+                                    });
+
                                     // Update bank balance
                                     db.run(
                                         'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
@@ -228,6 +269,17 @@ app.post('/api/sales', (req, res) => {
                                                 res.status(500).json({ error: err.message });
                                                 return;
                                             }
+
+                                            // Log sale
+                                            logAudit(
+                                                'CREATE',
+                                                'sale',
+                                                saleId,
+                                                `Sale: ${quantity}x ${item} for ${finalTotal.toFixed(2)}`,
+                                                'SALE_CREATED',
+                                                null,
+                                                JSON.stringify({ item, quantity, price, total: finalTotal, date })
+                                            );
 
                                             // Commit the transaction
                                             db.run('COMMIT', (err) => {
@@ -503,6 +555,17 @@ app.post('/api/expenses', (req, res) => {
                                 res.status(500).json({ error: err.message });
                                 return;
                             }
+
+                            // Log expense
+                            logAudit(
+                                'CREATE',
+                                'expense',
+                                expenseId,
+                                `Expense: ${category} - ${description} for ${amount.toFixed(2)} (${storeVendor})`,
+                                'EXPENSE_CREATED',
+                                null,
+                                JSON.stringify({ category, storeVendor, description, amount, date })
+                            );
 
                             // Commit the transaction
                             db.run('COMMIT', (err) => {
@@ -863,10 +926,28 @@ app.post('/api/inventory/adjustments', (req, res) => {
                                 return;
                             }
 
+                            const adjustmentId = this.lastID;
+
+                            // Log stock reduction
+                            db.get('SELECT name FROM inventory WHERE id = ?', [inventoryItemId], (err, invRow) => {
+                                if (!err && invRow) {
+                                    const reasonText = reason === 'damaged' ? 'Damaged Stock' : 'Free Giveaway';
+                                    logAudit(
+                                        'STOCK_REDUCTION',
+                                        'inventory',
+                                        inventoryItemId,
+                                        `Stock reduced for ${invRow.name}: ${currentStock} → ${newStock} (${reasonText} - ${quantity} units)`,
+                                        'STOCK_ADJUSTMENT',
+                                        currentStock.toString(),
+                                        newStock.toString()
+                                    );
+                                }
+                            });
+
                             db.run('COMMIT');
                             res.json({
                                 message: 'Stock adjustment recorded successfully',
-                                adjustmentId: this.lastID,
+                                adjustmentId: adjustmentId,
                                 newStock: newStock,
                                 reason: reason
                             });
@@ -1262,6 +1343,45 @@ app.get('/api/reports/year-over-year', (req, res) => {
                 }
             });
         });
+    });
+});
+
+// Audit Log API
+app.get('/api/audit-log', (req, res) => {
+    const { limit = 100, entityType, actionType, startDate, endDate } = req.query;
+    
+    let query = 'SELECT * FROM audit_log WHERE 1=1';
+    const params = [];
+    
+    if (entityType) {
+        query += ' AND entity_type = ?';
+        params.push(entityType);
+    }
+    
+    if (actionType) {
+        query += ' AND action_type = ?';
+        params.push(actionType);
+    }
+    
+    if (startDate) {
+        query += ' AND date(created_at) >= ?';
+        params.push(startDate);
+    }
+    
+    if (endDate) {
+        query += ' AND date(created_at) <= ?';
+        params.push(endDate);
+    }
+    
+    query += ' ORDER BY created_at DESC LIMIT ?';
+    params.push(parseInt(limit));
+    
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
     });
 });
 
