@@ -618,6 +618,8 @@
                 <select id="auditActionFilter" onchange="businessManager.loadAuditLog()" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;">
                     <option value="">All Actions</option>
                     <option value="CREATE">Created</option>
+                    <option value="UPDATE">Updated</option>
+                    <option value="DELETE">Deleted</option>
                     <option value="STOCK_REDUCTION">Stock Reduced</option>
                 </select>
                 <input type="date" id="auditStartDate" onchange="businessManager.loadAuditLog()" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;" placeholder="Start Date">

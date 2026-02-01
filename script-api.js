@@ -2637,7 +2637,12 @@ class BusinessManager {
         }
 
         tbody.innerHTML = data.map(entry => {
-            const timestamp = new Date(entry.created_at).toLocaleString();
+            // Server sends UTC (with Z); if we get plain datetime without timezone, treat as UTC for correct local display
+            const raw = entry.created_at;
+            const dateStr = (raw && !/Z|[+-]\d{2}:?\d{2}$/.test(raw) && raw.includes(' '))
+                ? raw.replace(' ', 'T') + 'Z'
+                : raw;
+            const timestamp = new Date(dateStr).toLocaleString();
             const actionIcon = this.getActionIcon(entry.action_type);
             const typeColor = this.getEntityTypeColor(entry.entity_type);
             

@@ -732,23 +732,48 @@ app.post('/api/inventory', (req, res) => {
                 res.status(500).json({ error: err.message });
                 return;
             }
-            res.json({ id: this.lastID, message: 'Inventory item added successfully' });
+            const newId = this.lastID;
+            logAudit(
+                'CREATE',
+                'inventory',
+                newId,
+                `Inventory: ${name} (${category}) - ${currentStock} units @ ${unitCost}`,
+                'INVENTORY_CREATED',
+                null,
+                JSON.stringify({ name, category, currentStock, minStock, unitCost, totalValue, stockDate: finalStockDate })
+            );
+            res.json({ id: newId, message: 'Inventory item added successfully' });
         }
     );
 });
 
 app.delete('/api/inventory/:id', (req, res) => {
     const id = req.params.id;
-    db.run('DELETE FROM inventory WHERE id = ?', [id], function(err) {
+    db.get('SELECT name, category, current_stock, unit_cost FROM inventory WHERE id = ?', [id], (err, row) => {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
         }
-        if (this.changes === 0) {
+        if (!row) {
             res.status(404).json({ error: 'Inventory item not found' });
             return;
         }
-        res.json({ message: 'Inventory item deleted successfully' });
+        db.run('DELETE FROM inventory WHERE id = ?', [id], function(runErr) {
+            if (runErr) {
+                res.status(500).json({ error: runErr.message });
+                return;
+            }
+            logAudit(
+                'DELETE',
+                'inventory',
+                parseInt(id),
+                `Inventory removed: ${row.name} (${row.category})`,
+                'INVENTORY_DELETED',
+                JSON.stringify({ name: row.name, category: row.category, current_stock: row.current_stock, unit_cost: row.unit_cost }),
+                null
+            );
+            res.json({ message: 'Inventory item deleted successfully' });
+        });
     });
 });
 
@@ -764,33 +789,52 @@ app.put('/api/inventory/:id', (req, res) => {
 
     const totalValue = currentStock * unitCost;
 
-    db.run(
-        'UPDATE inventory SET name = ?, category = ?, current_stock = ?, min_stock = ?, unit_cost = ?, total_value = ?, stock_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        [name, category, currentStock, minStock, unitCost, totalValue, stockDate, id],
-        function(err) {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
-            }
-            if (this.changes === 0) {
-                res.status(404).json({ error: 'Inventory item not found' });
-                return;
-            }
-            res.json({ 
-                message: 'Inventory item updated successfully',
-                updatedItem: {
-                    id: id,
-                    name: name,
-                    category: category,
-                    currentStock: currentStock,
-                    minStock: minStock,
-                    unitCost: unitCost,
-                    totalValue: totalValue,
-                    stockDate: stockDate
-                }
-            });
+    db.get('SELECT name, category, current_stock, min_stock, unit_cost, total_value, stock_date FROM inventory WHERE id = ?', [id], (err, oldRow) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
         }
-    );
+        if (!oldRow) {
+            res.status(404).json({ error: 'Inventory item not found' });
+            return;
+        }
+        db.run(
+            'UPDATE inventory SET name = ?, category = ?, current_stock = ?, min_stock = ?, unit_cost = ?, total_value = ?, stock_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [name, category, currentStock, minStock, unitCost, totalValue, stockDate, id],
+            function(runErr) {
+                if (runErr) {
+                    res.status(500).json({ error: runErr.message });
+                    return;
+                }
+                if (this.changes === 0) {
+                    res.status(404).json({ error: 'Inventory item not found' });
+                    return;
+                }
+                logAudit(
+                    'UPDATE',
+                    'inventory',
+                    parseInt(id),
+                    `Inventory updated: ${name} (${category})`,
+                    'INVENTORY_UPDATED',
+                    JSON.stringify({ name: oldRow.name, category: oldRow.category, current_stock: oldRow.current_stock, min_stock: oldRow.min_stock, unit_cost: oldRow.unit_cost, total_value: oldRow.total_value, stock_date: oldRow.stock_date }),
+                    JSON.stringify({ name, category, currentStock, minStock, unitCost, totalValue, stockDate })
+                );
+                res.json({ 
+                    message: 'Inventory item updated successfully',
+                    updatedItem: {
+                        id: id,
+                        name: name,
+                        category: category,
+                        currentStock: currentStock,
+                        minStock: minStock,
+                        unitCost: unitCost,
+                        totalValue: totalValue,
+                        stockDate: stockDate
+                    }
+                });
+            }
+        );
+    });
 });
 
 // Update inventory stock
@@ -1381,7 +1425,15 @@ app.get('/api/audit-log', (req, res) => {
             res.status(500).json({ error: err.message });
             return;
         }
-        res.json(rows);
+        // SQLite CURRENT_TIMESTAMP is UTC but has no 'Z'; send as ISO UTC so client shows correct local time
+        const rowsWithUtcTimestamps = (rows || []).map(row => {
+            const created = row.created_at;
+            const asUtc = (created && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(created))
+                ? created.replace(' ', 'T') + 'Z'
+                : created;
+            return { ...row, created_at: asUtc };
+        });
+        res.json(rowsWithUtcTimestamps);
     });
 });
 
