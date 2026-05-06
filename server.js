@@ -85,6 +85,19 @@ function initializeDatabase() {
             FOREIGN KEY (inventory_item_id) REFERENCES inventory (id)
         )`);
 
+        // Audit log table for tracking all business activities
+        db.run(`CREATE TABLE IF NOT EXISTS audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_type TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_id INTEGER,
+            description TEXT NOT NULL,
+            user_action TEXT,
+            old_value TEXT,
+            new_value TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+
         // Add new columns to sales table if they don't exist (for existing databases)
         db.run(`ALTER TABLE sales ADD COLUMN inventory_item_id INTEGER`, (err) => {
             // Ignore error if column already exists
@@ -103,6 +116,19 @@ function initializeDatabase() {
 // Helper function to update timestamp
 function updateTimestamp(table, id) {
     db.run(`UPDATE ${table} SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [id]);
+}
+
+// Helper function to log audit entries
+function logAudit(actionType, entityType, entityId, description, userAction, oldValue, newValue) {
+    db.run(
+        'INSERT INTO audit_log (action_type, entity_type, entity_id, description, user_action, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [actionType, entityType, entityId, description, userAction || null, oldValue || null, newValue || null],
+        (err) => {
+            if (err) {
+                console.error('Failed to log audit entry:', err);
+            }
+        }
+    );
 }
 
 // API Routes
@@ -218,6 +244,21 @@ app.post('/api/sales', (req, res) => {
                                         return;
                                     }
 
+                                    // Log inventory stock reduction
+                                    db.get('SELECT name FROM inventory WHERE id = ?', [inventoryItemId], (err, invRow) => {
+                                        if (!err && invRow) {
+                                            logAudit(
+                                                'STOCK_REDUCTION',
+                                                'inventory',
+                                                inventoryItemId,
+                                                `Stock reduced for ${invRow.name}: ${currentStock} → ${newStock} (sold ${quantity} units)`,
+                                                'SALE',
+                                                currentStock.toString(),
+                                                newStock.toString()
+                                            );
+                                        }
+                                    });
+
                                     // Update bank balance
                                     db.run(
                                         'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
@@ -228,6 +269,17 @@ app.post('/api/sales', (req, res) => {
                                                 res.status(500).json({ error: err.message });
                                                 return;
                                             }
+
+                                            // Log sale
+                                            logAudit(
+                                                'CREATE',
+                                                'sale',
+                                                saleId,
+                                                `Sale: ${quantity}x ${item} for ${finalTotal.toFixed(2)}`,
+                                                'SALE_CREATED',
+                                                null,
+                                                JSON.stringify({ item, quantity, price, total: finalTotal, date })
+                                            );
 
                                             // Commit the transaction
                                             db.run('COMMIT', (err) => {
@@ -504,6 +556,17 @@ app.post('/api/expenses', (req, res) => {
                                 return;
                             }
 
+                            // Log expense
+                            logAudit(
+                                'CREATE',
+                                'expense',
+                                expenseId,
+                                `Expense: ${category} - ${description} for ${amount.toFixed(2)} (${storeVendor})`,
+                                'EXPENSE_CREATED',
+                                null,
+                                JSON.stringify({ category, storeVendor, description, amount, date })
+                            );
+
                             // Commit the transaction
                             db.run('COMMIT', (err) => {
                                 if (err) {
@@ -669,23 +732,48 @@ app.post('/api/inventory', (req, res) => {
                 res.status(500).json({ error: err.message });
                 return;
             }
-            res.json({ id: this.lastID, message: 'Inventory item added successfully' });
+            const newId = this.lastID;
+            logAudit(
+                'CREATE',
+                'inventory',
+                newId,
+                `Inventory: ${name} (${category}) - ${currentStock} units @ ${unitCost}`,
+                'INVENTORY_CREATED',
+                null,
+                JSON.stringify({ name, category, currentStock, minStock, unitCost, totalValue, stockDate: finalStockDate })
+            );
+            res.json({ id: newId, message: 'Inventory item added successfully' });
         }
     );
 });
 
 app.delete('/api/inventory/:id', (req, res) => {
     const id = req.params.id;
-    db.run('DELETE FROM inventory WHERE id = ?', [id], function(err) {
+    db.get('SELECT name, category, current_stock, unit_cost FROM inventory WHERE id = ?', [id], (err, row) => {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
         }
-        if (this.changes === 0) {
+        if (!row) {
             res.status(404).json({ error: 'Inventory item not found' });
             return;
         }
-        res.json({ message: 'Inventory item deleted successfully' });
+        db.run('DELETE FROM inventory WHERE id = ?', [id], function(runErr) {
+            if (runErr) {
+                res.status(500).json({ error: runErr.message });
+                return;
+            }
+            logAudit(
+                'DELETE',
+                'inventory',
+                parseInt(id),
+                `Inventory removed: ${row.name} (${row.category})`,
+                'INVENTORY_DELETED',
+                JSON.stringify({ name: row.name, category: row.category, current_stock: row.current_stock, unit_cost: row.unit_cost }),
+                null
+            );
+            res.json({ message: 'Inventory item deleted successfully' });
+        });
     });
 });
 
@@ -701,33 +789,52 @@ app.put('/api/inventory/:id', (req, res) => {
 
     const totalValue = currentStock * unitCost;
 
-    db.run(
-        'UPDATE inventory SET name = ?, category = ?, current_stock = ?, min_stock = ?, unit_cost = ?, total_value = ?, stock_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        [name, category, currentStock, minStock, unitCost, totalValue, stockDate, id],
-        function(err) {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
-            }
-            if (this.changes === 0) {
-                res.status(404).json({ error: 'Inventory item not found' });
-                return;
-            }
-            res.json({ 
-                message: 'Inventory item updated successfully',
-                updatedItem: {
-                    id: id,
-                    name: name,
-                    category: category,
-                    currentStock: currentStock,
-                    minStock: minStock,
-                    unitCost: unitCost,
-                    totalValue: totalValue,
-                    stockDate: stockDate
-                }
-            });
+    db.get('SELECT name, category, current_stock, min_stock, unit_cost, total_value, stock_date FROM inventory WHERE id = ?', [id], (err, oldRow) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
         }
-    );
+        if (!oldRow) {
+            res.status(404).json({ error: 'Inventory item not found' });
+            return;
+        }
+        db.run(
+            'UPDATE inventory SET name = ?, category = ?, current_stock = ?, min_stock = ?, unit_cost = ?, total_value = ?, stock_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [name, category, currentStock, minStock, unitCost, totalValue, stockDate, id],
+            function(runErr) {
+                if (runErr) {
+                    res.status(500).json({ error: runErr.message });
+                    return;
+                }
+                if (this.changes === 0) {
+                    res.status(404).json({ error: 'Inventory item not found' });
+                    return;
+                }
+                logAudit(
+                    'UPDATE',
+                    'inventory',
+                    parseInt(id),
+                    `Inventory updated: ${name} (${category})`,
+                    'INVENTORY_UPDATED',
+                    JSON.stringify({ name: oldRow.name, category: oldRow.category, current_stock: oldRow.current_stock, min_stock: oldRow.min_stock, unit_cost: oldRow.unit_cost, total_value: oldRow.total_value, stock_date: oldRow.stock_date }),
+                    JSON.stringify({ name, category, currentStock, minStock, unitCost, totalValue, stockDate })
+                );
+                res.json({ 
+                    message: 'Inventory item updated successfully',
+                    updatedItem: {
+                        id: id,
+                        name: name,
+                        category: category,
+                        currentStock: currentStock,
+                        minStock: minStock,
+                        unitCost: unitCost,
+                        totalValue: totalValue,
+                        stockDate: stockDate
+                    }
+                });
+            }
+        );
+    });
 });
 
 // Update inventory stock
@@ -863,10 +970,28 @@ app.post('/api/inventory/adjustments', (req, res) => {
                                 return;
                             }
 
+                            const adjustmentId = this.lastID;
+
+                            // Log stock reduction
+                            db.get('SELECT name FROM inventory WHERE id = ?', [inventoryItemId], (err, invRow) => {
+                                if (!err && invRow) {
+                                    const reasonText = reason === 'damaged' ? 'Damaged Stock' : 'Free Giveaway';
+                                    logAudit(
+                                        'STOCK_REDUCTION',
+                                        'inventory',
+                                        inventoryItemId,
+                                        `Stock reduced for ${invRow.name}: ${currentStock} → ${newStock} (${reasonText} - ${quantity} units)`,
+                                        'STOCK_ADJUSTMENT',
+                                        currentStock.toString(),
+                                        newStock.toString()
+                                    );
+                                }
+                            });
+
                             db.run('COMMIT');
                             res.json({
                                 message: 'Stock adjustment recorded successfully',
-                                adjustmentId: this.lastID,
+                                adjustmentId: adjustmentId,
                                 newStock: newStock,
                                 reason: reason
                             });
@@ -963,6 +1088,359 @@ app.post('/api/inventory/repair', (req, res) => {
                     checkComplete();
                 }
             });
+        });
+    });
+});
+
+// Reports API
+app.get('/api/reports/sales', (req, res) => {
+    const { period, year, month } = req.query;
+    
+    let dateFilter = '';
+    const params = [];
+    
+    if (period === 'yearly' && year) {
+        dateFilter = "WHERE strftime('%Y', date) = ?";
+        params.push(year);
+    } else if (period === 'monthly' && year && month) {
+        dateFilter = "WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ?";
+        params.push(year, String(month).padStart(2, '0'));
+    } else if (period === 'weekly') {
+        // Get current week
+        const now = new Date();
+        const startOfWeek = new Date(now.setDate(now.getDate() - now.getDay()));
+        const endOfWeek = new Date(now.setDate(now.getDate() - now.getDay() + 6));
+        dateFilter = "WHERE date >= ? AND date <= ?";
+        params.push(startOfWeek.toISOString().split('T')[0], endOfWeek.toISOString().split('T')[0]);
+    } else if (period === 'daily' && year && month) {
+        dateFilter = "WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ?";
+        params.push(year, String(month).padStart(2, '0'));
+    }
+    
+    let groupBy = '';
+    if (period === 'daily') {
+        groupBy = "GROUP BY date ORDER BY date";
+    } else if (period === 'weekly') {
+        groupBy = "GROUP BY date ORDER BY date";
+    } else if (period === 'monthly') {
+        groupBy = "GROUP BY strftime('%m', date) ORDER BY strftime('%m', date)";
+    } else if (period === 'yearly') {
+        groupBy = "GROUP BY strftime('%Y', date) ORDER BY strftime('%Y', date)";
+    }
+    
+    const query = `
+        SELECT 
+            ${period === 'daily' ? 'date as period' : period === 'weekly' ? 'date as period' : period === 'monthly' ? "strftime('%m', date) as period" : "strftime('%Y', date) as period"},
+            COUNT(*) as transaction_count,
+            SUM(quantity) as total_quantity,
+            SUM(total) as total_sales,
+            AVG(total) as avg_sale
+        FROM sales
+        ${dateFilter}
+        ${groupBy}
+    `;
+    
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+app.get('/api/reports/best-selling', (req, res) => {
+    const { limit = 10, year, month } = req.query;
+    
+    let dateFilter = '';
+    const params = [];
+    
+    if (year && month) {
+        dateFilter = "WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ?";
+        params.push(year, String(month).padStart(2, '0'));
+    } else if (year) {
+        dateFilter = "WHERE strftime('%Y', date) = ?";
+        params.push(year);
+    }
+    
+    const query = `
+        SELECT 
+            item,
+            SUM(quantity) as total_quantity,
+            SUM(total) as total_revenue,
+            COUNT(*) as transaction_count,
+            AVG(price) as avg_price
+        FROM sales
+        ${dateFilter}
+        GROUP BY item
+        ORDER BY total_quantity DESC
+        LIMIT ?
+    `;
+    
+    params.push(parseInt(limit));
+    
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+app.get('/api/reports/expenses', (req, res) => {
+    const { period, year, month } = req.query;
+    
+    let dateFilter = '';
+    const params = [];
+    
+    if (period === 'yearly' && year) {
+        dateFilter = "WHERE strftime('%Y', date) = ?";
+        params.push(year);
+    } else if (period === 'monthly' && year && month) {
+        dateFilter = "WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ?";
+        params.push(year, String(month).padStart(2, '0'));
+    } else if (period === 'weekly') {
+        const now = new Date();
+        const startOfWeek = new Date(now.setDate(now.getDate() - now.getDay()));
+        const endOfWeek = new Date(now.setDate(now.getDate() - now.getDay() + 6));
+        dateFilter = "WHERE date >= ? AND date <= ?";
+        params.push(startOfWeek.toISOString().split('T')[0], endOfWeek.toISOString().split('T')[0]);
+    } else if (period === 'daily' && year && month) {
+        dateFilter = "WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ?";
+        params.push(year, String(month).padStart(2, '0'));
+    }
+    
+    let groupBy = '';
+    if (period === 'daily') {
+        groupBy = "GROUP BY date, category ORDER BY date, category";
+    } else if (period === 'weekly') {
+        groupBy = "GROUP BY date, category ORDER BY date, category";
+    } else if (period === 'monthly') {
+        groupBy = "GROUP BY strftime('%m', date), category ORDER BY strftime('%m', date), category";
+    } else if (period === 'yearly') {
+        groupBy = "GROUP BY strftime('%Y', date), category ORDER BY strftime('%Y', date), category";
+    }
+    
+    const query = `
+        SELECT 
+            ${period === 'daily' ? 'date as period' : period === 'weekly' ? 'date as period' : period === 'monthly' ? "strftime('%m', date) as period" : "strftime('%Y', date) as period"},
+            category,
+            SUM(amount) as total_amount,
+            COUNT(*) as transaction_count
+        FROM expenses
+        ${dateFilter}
+        ${groupBy}
+    `;
+    
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+app.get('/api/reports/profit-margin', (req, res) => {
+    const { year, month } = req.query;
+    
+    let dateFilter = '';
+    const params = [];
+    
+    if (year && month) {
+        dateFilter = "WHERE strftime('%Y', s.date) = ? AND strftime('%m', s.date) = ?";
+        params.push(year, String(month).padStart(2, '0'));
+    } else if (year) {
+        dateFilter = "WHERE strftime('%Y', s.date) = ?";
+        params.push(year);
+    }
+    
+    // Get sales with inventory costs if linked
+    const query = `
+        SELECT 
+            s.item,
+            SUM(s.quantity) as total_quantity,
+            SUM(s.total) as total_revenue,
+            AVG(s.price) as avg_selling_price,
+            CASE 
+                WHEN s.inventory_item_id IS NOT NULL THEN
+                    SUM(s.inventory_quantity * i.unit_cost)
+                ELSE 0
+            END as total_cost,
+            COUNT(*) as transaction_count
+        FROM sales s
+        LEFT JOIN inventory i ON s.inventory_item_id = i.id
+        ${dateFilter}
+        GROUP BY s.item
+        ORDER BY total_revenue DESC
+    `;
+    
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        
+        // Calculate profit margins
+        const results = rows.map(row => {
+            const revenue = row.total_revenue || 0;
+            const cost = row.total_cost || 0;
+            const profit = revenue - cost;
+            const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
+            
+            return {
+                ...row,
+                total_cost: cost,
+                profit: profit,
+                margin: margin
+            };
+        });
+        
+        res.json(results);
+    });
+});
+
+app.get('/api/reports/year-over-year', (req, res) => {
+    const { year } = req.query;
+    const currentYear = year || new Date().getFullYear();
+    const previousYear = currentYear - 1;
+    
+    // Get sales for both years
+    const salesQuery = `
+        SELECT 
+            strftime('%Y', date) as year,
+            strftime('%m', date) as month,
+            SUM(total) as total_sales,
+            COUNT(*) as transaction_count
+        FROM sales
+        WHERE strftime('%Y', date) IN (?, ?)
+        GROUP BY year, month
+        ORDER BY year, month
+    `;
+    
+    // Get expenses for both years
+    const expensesQuery = `
+        SELECT 
+            strftime('%Y', date) as year,
+            strftime('%m', date) as month,
+            SUM(amount) as total_expenses,
+            COUNT(*) as transaction_count
+        FROM expenses
+        WHERE strftime('%Y', date) IN (?, ?)
+        GROUP BY year, month
+        ORDER BY year, month
+    `;
+    
+    db.all(salesQuery, [currentYear.toString(), previousYear.toString()], (err, salesRows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        
+        db.all(expensesQuery, [currentYear.toString(), previousYear.toString()], (err, expensesRows) => {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            
+            // Calculate totals
+            const currentYearSales = salesRows
+                .filter(r => r.year === currentYear.toString())
+                .reduce((sum, r) => sum + (r.total_sales || 0), 0);
+            const previousYearSales = salesRows
+                .filter(r => r.year === previousYear.toString())
+                .reduce((sum, r) => sum + (r.total_sales || 0), 0);
+            
+            const currentYearExpenses = expensesRows
+                .filter(r => r.year === currentYear.toString())
+                .reduce((sum, r) => sum + (r.total_expenses || 0), 0);
+            const previousYearExpenses = expensesRows
+                .filter(r => r.year === previousYear.toString())
+                .reduce((sum, r) => sum + (r.total_expenses || 0), 0);
+            
+            const currentYearProfit = currentYearSales - currentYearExpenses;
+            const previousYearProfit = previousYearSales - previousYearExpenses;
+            
+            res.json({
+                currentYear: currentYear,
+                previousYear: previousYear,
+                sales: {
+                    current: currentYearSales,
+                    previous: previousYearSales,
+                    change: currentYearSales - previousYearSales,
+                    changePercent: previousYearSales > 0 ? ((currentYearSales - previousYearSales) / previousYearSales) * 100 : 0,
+                    monthly: salesRows
+                },
+                expenses: {
+                    current: currentYearExpenses,
+                    previous: previousYearExpenses,
+                    change: currentYearExpenses - previousYearExpenses,
+                    changePercent: previousYearExpenses > 0 ? ((currentYearExpenses - previousYearExpenses) / previousYearExpenses) * 100 : 0,
+                    monthly: expensesRows
+                },
+                profit: {
+                    current: currentYearProfit,
+                    previous: previousYearProfit,
+                    change: currentYearProfit - previousYearProfit,
+                    changePercent: previousYearProfit !== 0 ? ((currentYearProfit - previousYearProfit) / Math.abs(previousYearProfit)) * 100 : 0
+                }
+            });
+        });
+    });
+});
+
+// Audit Log API (supports pagination: page, limit; returns { total, data })
+app.get('/api/audit-log', (req, res) => {
+    const { limit = 25, page = 1, entityType, actionType, startDate, endDate } = req.query;
+    const limitNum = Math.min(Math.max(parseInt(limit) || 25, 1), 200);
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const offset = (pageNum - 1) * limitNum;
+
+    const conditions = [];
+    const params = [];
+    if (entityType) {
+        conditions.push('entity_type = ?');
+        params.push(entityType);
+    }
+    if (actionType) {
+        conditions.push('action_type = ?');
+        params.push(actionType);
+    }
+    if (startDate) {
+        conditions.push('date(created_at) >= ?');
+        params.push(startDate);
+    }
+    if (endDate) {
+        conditions.push('date(created_at) <= ?');
+        params.push(endDate);
+    }
+    const whereClause = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
+
+    const countQuery = 'SELECT COUNT(*) AS total FROM audit_log' + whereClause;
+    db.get(countQuery, params, (err, countRow) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        const total = countRow?.total ?? 0;
+
+        const dataQuery = 'SELECT * FROM audit_log' + whereClause + ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+        const dataParams = [...params, limitNum, offset];
+        db.all(dataQuery, dataParams, (err, rows) => {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            // SQLite CURRENT_TIMESTAMP is UTC but has no 'Z'; send as ISO UTC so client shows correct local time
+            const rowsWithUtcTimestamps = (rows || []).map(row => {
+                const created = row.created_at;
+                const asUtc = (created && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(created))
+                    ? created.replace(' ', 'T') + 'Z'
+                    : created;
+                return { ...row, created_at: asUtc };
+            });
+            res.json({ total, data: rowsWithUtcTimestamps });
         });
     });
 });

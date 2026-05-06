@@ -25,6 +25,12 @@
                 <button class="tab-btn" data-tab="inventory">
                     <i class="fas fa-boxes"></i> Inventory
                 </button>
+                <button class="tab-btn" data-tab="reports">
+                    <i class="fas fa-chart-bar"></i> Reports
+                </button>
+                <button class="tab-btn" data-tab="audit">
+                    <i class="fas fa-history"></i> Audit Log
+                </button>
             </nav>
         </header>
 
@@ -513,6 +519,136 @@
         </div>
     </div>
 
+    <!-- Reports Tab -->
+    <div id="reports" class="tab-content">
+        <div class="section-header">
+            <h2><i class="fas fa-chart-bar"></i> Financial Reports & Analytics</h2>
+            <div class="section-header-controls report-controls">
+                <select id="reportPeriod" onchange="businessManager.updateReports()" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                    <option value="monthly">Monthly</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="daily">Daily</option>
+                    <option value="yearly">Yearly</option>
+                </select>
+                <input type="month" id="reportMonthPicker" onchange="businessManager.updateReports()" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;">
+            </div>
+        </div>
+
+        <!-- Sales Reports Section -->
+        <div class="report-section">
+            <h3><i class="fas fa-dollar-sign"></i> Sales Reports</h3>
+            <div class="report-grid">
+                <div class="report-card">
+                    <h4>Sales Summary</h4>
+                    <div id="salesSummaryReport"></div>
+                </div>
+                <div class="report-card">
+                    <h4>Sales Trend</h4>
+                    <canvas id="salesTrendChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Best Selling Items -->
+        <div class="report-section">
+            <h3><i class="fas fa-trophy"></i> Best Selling Items</h3>
+            <div class="report-card">
+                <div id="bestSellingItemsReport"></div>
+            </div>
+        </div>
+
+        <!-- Expense Reports Section -->
+        <div class="report-section">
+            <h3><i class="fas fa-receipt"></i> Expense Reports</h3>
+            <div class="report-grid">
+                <div class="report-card">
+                    <h4>Expenses by Category</h4>
+                    <canvas id="expenseCategoryChart"></canvas>
+                </div>
+                <div class="report-card">
+                    <h4>Expense Trends</h4>
+                    <canvas id="expenseTrendChart"></canvas>
+                </div>
+            </div>
+            <div class="report-card" style="margin-top: 20px;">
+                <h4>Category Breakdown</h4>
+                <div id="expenseCategoryReport"></div>
+            </div>
+        </div>
+
+        <!-- Profit Margin Analysis -->
+        <div class="report-section">
+            <h3><i class="fas fa-percentage"></i> Profit Margin Analysis</h3>
+            <div class="report-card">
+                <div id="profitMarginReport"></div>
+            </div>
+        </div>
+
+        <!-- Year Over Year Comparison -->
+        <div class="report-section">
+            <h3><i class="fas fa-calendar-alt"></i> Year Over Year Comparison</h3>
+            <div class="report-grid">
+                <div class="report-card">
+                    <h4>Sales Comparison</h4>
+                    <canvas id="yoySalesChart"></canvas>
+                </div>
+                <div class="report-card">
+                    <h4>Expenses Comparison</h4>
+                    <canvas id="yoyExpensesChart"></canvas>
+                </div>
+            </div>
+            <div class="report-card" style="margin-top: 20px;">
+                <h4>Year Over Year Summary</h4>
+                <div id="yoySummaryReport"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audit Log Tab -->
+    <div id="audit" class="tab-content">
+        <div class="section-header">
+            <h2><i class="fas fa-history"></i> Audit Log</h2>
+            <div class="section-header-controls audit-filters">
+                <select id="auditEntityFilter" onchange="businessManager.loadAuditLog(true)" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                    <option value="">All Types</option>
+                    <option value="sale">Sales</option>
+                    <option value="expense">Expenses</option>
+                    <option value="inventory">Inventory</option>
+                </select>
+                <select id="auditActionFilter" onchange="businessManager.loadAuditLog(true)" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                    <option value="">All Actions</option>
+                    <option value="CREATE">Created</option>
+                    <option value="UPDATE">Updated</option>
+                    <option value="DELETE">Deleted</option>
+                    <option value="STOCK_REDUCTION">Stock Reduced</option>
+                </select>
+                <input type="date" id="auditStartDate" onchange="businessManager.loadAuditLog(true)" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;" placeholder="Start Date">
+                <input type="date" id="auditEndDate" onchange="businessManager.loadAuditLog(true)" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;" placeholder="End Date">
+            </div>
+        </div>
+
+        <div class="table-container audit-log-table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Action</th>
+                        <th>Type</th>
+                        <th>Description</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody id="auditLogTableBody">
+                    <tr class="no-data-row">
+                        <td colspan="5">Loading audit log...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div id="auditLogPagination" style="display:flex; gap:8px; justify-content:flex-end; padding:10px; flex-wrap:wrap;"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="script-api.js"></script>
 </body>
 </html>
