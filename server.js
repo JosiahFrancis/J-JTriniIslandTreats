@@ -1390,50 +1390,58 @@ app.get('/api/reports/year-over-year', (req, res) => {
     });
 });
 
-// Audit Log API
+// Audit Log API (supports pagination: page, limit; returns { total, data })
 app.get('/api/audit-log', (req, res) => {
-    const { limit = 100, entityType, actionType, startDate, endDate } = req.query;
-    
-    let query = 'SELECT * FROM audit_log WHERE 1=1';
+    const { limit = 25, page = 1, entityType, actionType, startDate, endDate } = req.query;
+    const limitNum = Math.min(Math.max(parseInt(limit) || 25, 1), 200);
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const offset = (pageNum - 1) * limitNum;
+
+    const conditions = [];
     const params = [];
-    
     if (entityType) {
-        query += ' AND entity_type = ?';
+        conditions.push('entity_type = ?');
         params.push(entityType);
     }
-    
     if (actionType) {
-        query += ' AND action_type = ?';
+        conditions.push('action_type = ?');
         params.push(actionType);
     }
-    
     if (startDate) {
-        query += ' AND date(created_at) >= ?';
+        conditions.push('date(created_at) >= ?');
         params.push(startDate);
     }
-    
     if (endDate) {
-        query += ' AND date(created_at) <= ?';
+        conditions.push('date(created_at) <= ?');
         params.push(endDate);
     }
-    
-    query += ' ORDER BY created_at DESC LIMIT ?';
-    params.push(parseInt(limit));
-    
-    db.all(query, params, (err, rows) => {
+    const whereClause = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
+
+    const countQuery = 'SELECT COUNT(*) AS total FROM audit_log' + whereClause;
+    db.get(countQuery, params, (err, countRow) => {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
         }
-        // SQLite CURRENT_TIMESTAMP is UTC but has no 'Z'; send as ISO UTC so client shows correct local time
-        const rowsWithUtcTimestamps = (rows || []).map(row => {
-            const created = row.created_at;
-            const asUtc = (created && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(created))
-                ? created.replace(' ', 'T') + 'Z'
-                : created;
-            return { ...row, created_at: asUtc };
+        const total = countRow?.total ?? 0;
+
+        const dataQuery = 'SELECT * FROM audit_log' + whereClause + ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+        const dataParams = [...params, limitNum, offset];
+        db.all(dataQuery, dataParams, (err, rows) => {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            // SQLite CURRENT_TIMESTAMP is UTC but has no 'Z'; send as ISO UTC so client shows correct local time
+            const rowsWithUtcTimestamps = (rows || []).map(row => {
+                const created = row.created_at;
+                const asUtc = (created && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(created))
+                    ? created.replace(' ', 'T') + 'Z'
+                    : created;
+                return { ...row, created_at: asUtc };
+            });
+            res.json({ total, data: rowsWithUtcTimestamps });
         });
-        res.json(rowsWithUtcTimestamps);
     });
 });
 

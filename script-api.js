@@ -18,6 +18,11 @@ class BusinessManager {
         this.expensesPageSize = 10;
         this.expensesFiltered = null; // null = use full list
 
+        // Audit log pagination state
+        this.auditLogPage = 1;
+        this.auditLogPageSize = 25;
+        this.auditLogTotal = 0;
+
         // Reports state
         this.reportCharts = {};
 
@@ -2605,26 +2610,58 @@ class BusinessManager {
     }
 
     // Audit Log Functions
-    async loadAuditLog() {
+    async loadAuditLog(resetPage = false) {
         try {
+            if (resetPage) this.auditLogPage = 1;
             const entityType = document.getElementById('auditEntityFilter')?.value || '';
             const actionType = document.getElementById('auditActionFilter')?.value || '';
             const startDate = document.getElementById('auditStartDate')?.value || '';
             const endDate = document.getElementById('auditEndDate')?.value || '';
-            
-            let query = '/audit-log?limit=200';
+
+            let query = `/audit-log?limit=${this.auditLogPageSize}&page=${this.auditLogPage}`;
             if (entityType) query += `&entityType=${entityType}`;
             if (actionType) query += `&actionType=${actionType}`;
             if (startDate) query += `&startDate=${startDate}`;
             if (endDate) query += `&endDate=${endDate}`;
-            
-            const data = await this.apiRequest(query);
+
+            const response = await this.apiRequest(query);
+            const data = Array.isArray(response) ? response : (response.data || []);
+            const total = typeof response.total === 'number' ? response.total : data.length;
+
+            this.auditLogTotal = total;
             this.renderAuditLog(data);
+            const totalPages = Math.max(1, Math.ceil(total / this.auditLogPageSize));
+            this.renderAuditLogPagination(total, this.auditLogPage, totalPages);
         } catch (error) {
             console.error('Failed to load audit log:', error);
-            document.getElementById('auditLogTableBody').innerHTML = 
+            document.getElementById('auditLogTableBody').innerHTML =
                 '<tr class="no-data-row"><td colspan="5">Failed to load audit log</td></tr>';
+            const pag = document.getElementById('auditLogPagination');
+            if (pag) pag.innerHTML = '';
         }
+    }
+
+    renderAuditLogPagination(total, page, totalPages) {
+        const container = document.getElementById('auditLogPagination');
+        if (!container) return;
+        if (total <= this.auditLogPageSize) {
+            container.innerHTML = '';
+            container.className = '';
+            return;
+        }
+        const disablePrev = page <= 1;
+        const disableNext = page >= totalPages;
+        container.className = 'pagination';
+        container.innerHTML = `
+            <button ${disablePrev ? 'disabled' : ''} aria-label="Previous" onclick="businessManager.changeAuditLogPage(${page - 1})">Prev</button>
+            <span style="align-self:center; color:#4a5568;">Page ${page} of ${totalPages}</span>
+            <button ${disableNext ? 'disabled' : ''} aria-label="Next" onclick="businessManager.changeAuditLogPage(${page + 1})">Next</button>
+        `;
+    }
+
+    changeAuditLogPage(nextPage) {
+        this.auditLogPage = nextPage;
+        this.loadAuditLog();
     }
 
     renderAuditLog(data) {
@@ -2662,20 +2699,20 @@ class BusinessManager {
 
             return `
                 <tr>
-                    <td style="font-size: 0.9rem; color: #718096;">${timestamp}</td>
-                    <td>
+                    <td data-label="Timestamp" style="font-size: 0.9rem; color: #718096;">${timestamp}</td>
+                    <td data-label="Action">
                         <span style="display: inline-flex; align-items: center; gap: 5px;">
                             ${actionIcon}
                             <span style="font-weight: 600; color: #4a5568;">${entry.action_type}</span>
                         </span>
                     </td>
-                    <td>
+                    <td data-label="Type">
                         <span style="padding: 4px 10px; border-radius: 12px; background: ${typeColor}; color: white; font-size: 0.85rem; font-weight: 600;">
                             ${this.capitalizeFirst(entry.entity_type)}
                         </span>
                     </td>
-                    <td>${entry.description}</td>
-                    <td style="font-size: 0.9rem; color: #4a5568;">${details || '-'}</td>
+                    <td data-label="Description">${entry.description}</td>
+                    <td data-label="Details" style="font-size: 0.9rem; color: #4a5568;">${details || '-'}</td>
                 </tr>
             `;
         }).join('');

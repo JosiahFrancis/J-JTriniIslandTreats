@@ -210,6 +210,14 @@ body {
     color: #667eea;
 }
 
+/* Section header controls (Reports, Audit) - wrap on small screens */
+.section-header-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+
 /* Buttons */
 .btn {
     padding: 12px 24px;
@@ -608,6 +616,119 @@ form {
     .summary-amount {
         font-size: 1.1rem;
     }
+
+    /* Reports tab mobile */
+    #reports .tab-content {
+        padding: 15px;
+    }
+    #reports .section-header-controls.report-controls {
+        width: 100%;
+    }
+    #reports .section-header-controls select,
+    #reports .section-header-controls input {
+        flex: 1 1 100%;
+        min-width: 0;
+        max-width: 100%;
+    }
+    #reports .report-section {
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+    #reports .report-section h3 {
+        font-size: 1.2rem;
+        margin-bottom: 15px;
+    }
+    #reports .report-grid {
+        grid-template-columns: 1fr;
+        gap: 15px;
+        margin-top: 15px;
+    }
+    #reports .report-card {
+        padding: 15px;
+        min-width: 0;
+    }
+    #reports .report-card h4 {
+        font-size: 1rem;
+        margin-bottom: 10px;
+    }
+    #reports .report-card canvas {
+        max-height: 220px;
+        width: 100% !important;
+        height: auto !important;
+    }
+
+    /* Audit log tab mobile */
+    #audit .tab-content {
+        padding: 15px;
+    }
+    #audit .section-header-controls.audit-filters {
+        width: 100%;
+    }
+    #audit .section-header-controls select,
+    #audit .section-header-controls input {
+        flex: 1 1 calc(50% - 5px);
+        min-width: 120px;
+        max-width: 100%;
+    }
+    #audit .table-container.audit-log-table-container {
+        margin: 0 -5px;
+        border-radius: 10px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    #audit .audit-log-table-container .data-table {
+        min-width: 500px;
+    }
+
+    /* Audit log: card layout on mobile (stack rows as cards) */
+    #audit .audit-log-table-container .data-table thead {
+        display: none;
+    }
+    #audit .audit-log-table-container .data-table tbody tr {
+        display: block;
+        background: #f7fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        margin-bottom: 12px;
+        padding: 12px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    }
+    #audit .audit-log-table-container .data-table tbody tr:hover {
+        background: #edf2f7;
+    }
+    #audit .audit-log-table-container .data-table tbody td {
+        display: block;
+        padding: 8px 0;
+        border-bottom: 1px solid #e2e8f0;
+        white-space: normal;
+    }
+    #audit .audit-log-table-container .data-table tbody td:last-child {
+        border-bottom: none;
+    }
+    #audit .audit-log-table-container .data-table tbody td::before {
+        content: attr(data-label);
+        display: block;
+        font-weight: 600;
+        font-size: 0.75rem;
+        color: #718096;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        margin-bottom: 4px;
+    }
+    #audit .audit-log-table-container .data-table tbody tr.no-data-row td {
+        text-align: center;
+        padding: 20px;
+        border-bottom: none;
+    }
+    #audit .audit-log-table-container .data-table tbody tr.no-data-row td::before {
+        display: none;
+    }
+    #audit .audit-log-table-container .data-table {
+        min-width: 0;
+    }
+    #audit .audit-log-table-container {
+        overflow-x: visible;
+    }
 }
 
 @media (max-width: 480px) {
@@ -641,6 +762,47 @@ form {
     }
     
     .pagination span {
+        font-size: 0.85rem;
+    }
+
+    /* Reports: full-width controls, tighter layout */
+    #reports .tab-content {
+        padding: 10px;
+    }
+    #reports .section-header h2 {
+        font-size: 1.3rem;
+    }
+    #reports .section-header-controls select,
+    #reports .section-header-controls input {
+        flex: 1 1 100%;
+    }
+    #reports .report-section {
+        padding: 12px;
+        margin-bottom: 15px;
+    }
+    #reports .report-section h3 {
+        font-size: 1.1rem;
+    }
+    #reports .report-card {
+        padding: 12px;
+    }
+    #reports .report-card canvas {
+        max-height: 200px;
+    }
+
+    /* Audit: full-width filters on very small screens */
+    #audit .tab-content {
+        padding: 10px;
+    }
+    #audit .section-header h2 {
+        font-size: 1.3rem;
+    }
+    #audit .section-header-controls select,
+    #audit .section-header-controls input {
+        flex: 1 1 100%;
+        min-width: 0;
+    }
+    #audit .audit-log-table-container .data-table tbody td {
         font-size: 0.85rem;
     }
 }
@@ -770,7 +932,7 @@ form {
 
 .report-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(400px, 100%), 1fr));
     gap: 20px;
     margin-top: 20px;
 }

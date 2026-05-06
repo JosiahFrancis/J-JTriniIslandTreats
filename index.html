@@ -523,7 +523,7 @@
     <div id="reports" class="tab-content">
         <div class="section-header">
             <h2><i class="fas fa-chart-bar"></i> Financial Reports & Analytics</h2>
-            <div style="display: flex; gap: 10px;">
+            <div class="section-header-controls report-controls">
                 <select id="reportPeriod" onchange="businessManager.updateReports()" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;">
                     <option value="monthly">Monthly</option>
                     <option value="weekly">Weekly</option>
@@ -608,26 +608,26 @@
     <div id="audit" class="tab-content">
         <div class="section-header">
             <h2><i class="fas fa-history"></i> Audit Log</h2>
-            <div style="display: flex; gap: 10px;">
-                <select id="auditEntityFilter" onchange="businessManager.loadAuditLog()" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;">
+            <div class="section-header-controls audit-filters">
+                <select id="auditEntityFilter" onchange="businessManager.loadAuditLog(true)" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;">
                     <option value="">All Types</option>
                     <option value="sale">Sales</option>
                     <option value="expense">Expenses</option>
                     <option value="inventory">Inventory</option>
                 </select>
-                <select id="auditActionFilter" onchange="businessManager.loadAuditLog()" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                <select id="auditActionFilter" onchange="businessManager.loadAuditLog(true)" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;">
                     <option value="">All Actions</option>
                     <option value="CREATE">Created</option>
                     <option value="UPDATE">Updated</option>
                     <option value="DELETE">Deleted</option>
                     <option value="STOCK_REDUCTION">Stock Reduced</option>
                 </select>
-                <input type="date" id="auditStartDate" onchange="businessManager.loadAuditLog()" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;" placeholder="Start Date">
-                <input type="date" id="auditEndDate" onchange="businessManager.loadAuditLog()" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;" placeholder="End Date">
+                <input type="date" id="auditStartDate" onchange="businessManager.loadAuditLog(true)" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;" placeholder="Start Date">
+                <input type="date" id="auditEndDate" onchange="businessManager.loadAuditLog(true)" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;" placeholder="End Date">
             </div>
         </div>
 
-        <div class="table-container">
+        <div class="table-container audit-log-table-container">
             <table class="data-table">
                 <thead>
                     <tr>
@@ -645,6 +645,7 @@
                 </tbody>
             </table>
         </div>
+        <div id="auditLogPagination" style="display:flex; gap:8px; justify-content:flex-end; padding:10px; flex-wrap:wrap;"></div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
