@@ -1128,20 +1128,40 @@ class BusinessManager {
     }
 
     // Backup & Restore
-    exportAllJSON() {
-        const payload = {
-            version: 2,
-            exportedAt: new Date().toISOString(),
-            data: {
-                sales: this.sales,
-                expenses: this.expenses,
-                inventory: this.inventory,
-                bankBalance: this.bankBalance
-            }
-        };
-        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-        this.downloadBlob(`business-backup-${this.getDateStamp()}.json`, blob);
-        this.showNotification('Exported all data to JSON', 'success');
+    async exportAllJSON() {
+        try {
+            const [sales, expenses, inventory, balanceData] = await Promise.all([
+                this.apiRequest('/sales?limit=all'),
+                this.apiRequest('/expenses'),
+                this.apiRequest('/inventory'),
+                this.apiRequest('/settings/bankBalance')
+            ]);
+
+            this.sales = sales;
+            this.expenses = expenses;
+            this.inventory = inventory;
+            this.bankBalance = balanceData.value ? parseFloat(balanceData.value) : 0;
+
+            const payload = {
+                version: 2,
+                exportedAt: new Date().toISOString(),
+                data: {
+                    sales,
+                    expenses,
+                    inventory,
+                    bankBalance: this.bankBalance
+                }
+            };
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+            this.downloadBlob(`business-backup-${this.getDateStamp()}.json`, blob);
+            this.showNotification(
+                `Exported backup: ${sales.length} sales, ${expenses.length} expenses, ${inventory.length} inventory items`,
+                'success'
+            );
+        } catch (error) {
+            console.error('Failed to export JSON:', error);
+            this.showNotification('Failed to export JSON backup', 'danger');
+        }
     }
 
     handleImportAllJSON(file) {
@@ -1150,13 +1170,16 @@ class BusinessManager {
             try {
                 const parsed = JSON.parse(reader.result);
                 const data = parsed.data || parsed;
-                
-                if (!data || !Array.isArray(data.sales) || !Array.isArray(data.expenses) || !Array.isArray(data.inventory)) {
+                const sales = Array.isArray(data?.sales) ? data.sales : [];
+                const expenses = Array.isArray(data?.expenses) ? data.expenses : [];
+                const inventory = Array.isArray(data?.inventory) ? data.inventory : [];
+
+                if (!data || (!sales.length && !expenses.length && !inventory.length)) {
                     throw new Error('Invalid JSON structure');
                 }
 
                 // Import sales
-                for (const sale of data.sales) {
+                for (const sale of sales) {
                     await this.apiRequest('/sales', {
                         method: 'POST',
                         body: JSON.stringify(this.normalizeSale(sale))
@@ -1164,7 +1187,7 @@ class BusinessManager {
                 }
 
                 // Import expenses
-                for (const expense of data.expenses) {
+                for (const expense of expenses) {
                     await this.apiRequest('/expenses', {
                         method: 'POST',
                         body: JSON.stringify(this.normalizeExpense(expense))
@@ -1172,7 +1195,7 @@ class BusinessManager {
                 }
 
                 // Import inventory
-                for (const item of data.inventory) {
+                for (const item of inventory) {
                     await this.apiRequest('/inventory', {
                         method: 'POST',
                         body: JSON.stringify(this.normalizeInventoryItem(item))
@@ -1180,10 +1203,13 @@ class BusinessManager {
                 }
 
                 // Update bank balance
-                if (typeof data.bankBalance === 'number') {
+                const importedBankBalance = this.toNumber(
+                    this.pickField(data, ['bankBalance', 'bank_balance', 'balance'])
+                );
+                if (importedBankBalance !== null) {
                     await this.apiRequest('/settings/bankBalance', {
                         method: 'POST',
-                        body: JSON.stringify({ value: data.bankBalance })
+                        body: JSON.stringify({ value: importedBankBalance })
                     });
                 }
 
@@ -1200,26 +1226,38 @@ class BusinessManager {
         reader.readAsText(file);
     }
 
-    exportCSV(type) {
-        let rows = [];
-        switch (type) {
-            case 'sales':
-                rows = [['date','item','quantity','price','total'], ...this.sales.map(s => [s.date, s.item, s.quantity, s.price, s.total])];
-                break;
-            case 'expenses':
-                rows = [['date','category','storeVendor','description','amount'], ...this.expenses.map(x => [x.date, x.category, x.store_vendor, x.description, x.amount])];
-                break;
-            case 'inventory':
-                rows = [['name','category','currentStock','minStock','unitCost','totalValue'], ...this.inventory.map(i => [i.name, i.category, i.current_stock, i.min_stock, i.unit_cost, i.total_value])];
-                break;
-            default:
-                this.showNotification('Unknown type for CSV export', 'danger');
-                return;
+    async exportCSV(type) {
+        try {
+            let data;
+            let rows = [];
+            switch (type) {
+                case 'sales':
+                    data = await this.apiRequest('/sales?limit=all');
+                    this.sales = data;
+                    rows = [['date','item','quantity','price','total'], ...data.map(s => [s.date, s.item, s.quantity, s.price, s.total])];
+                    break;
+                case 'expenses':
+                    data = await this.apiRequest('/expenses');
+                    this.expenses = data;
+                    rows = [['date','category','storeVendor','description','amount'], ...data.map(x => [x.date, x.category, x.store_vendor, x.description, x.amount])];
+                    break;
+                case 'inventory':
+                    data = await this.apiRequest('/inventory');
+                    this.inventory = data;
+                    rows = [['name','category','currentStock','minStock','unitCost','totalValue'], ...data.map(i => [i.name, i.category, i.current_stock, i.min_stock, i.unit_cost, i.total_value])];
+                    break;
+                default:
+                    this.showNotification('Unknown type for CSV export', 'danger');
+                    return;
+            }
+            const csv = rows.map(r => r.map(this.csvEscape).join(',')).join('\n');
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            this.downloadBlob(`${type}-${this.getDateStamp()}.csv`, blob);
+            this.showNotification(`Exported ${data.length} ${type} record(s) to CSV`, 'success');
+        } catch (error) {
+            console.error('Failed to export CSV:', error);
+            this.showNotification(`Failed to export ${type} to CSV`, 'danger');
         }
-        const csv = rows.map(r => r.map(this.csvEscape).join(',')).join('\n');
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-        this.downloadBlob(`${type}-${this.getDateStamp()}.csv`, blob);
-        this.showNotification(`Exported ${type} to CSV`, 'success');
     }
 
     handleImportCSV(type, file) {
@@ -1294,36 +1332,62 @@ class BusinessManager {
     }
 
     // Normalizers ensure correct types and required fields
+    pickField = (obj, keys = [], fallback = undefined) => {
+        if (!obj || typeof obj !== 'object') return fallback;
+        for (const key of keys) {
+            if (obj[key] !== undefined && obj[key] !== null) return obj[key];
+        }
+        return fallback;
+    }
+
+    toNumber = (value) => {
+        if (value === undefined || value === null || value === '') return null;
+        const converted = Number(value);
+        return Number.isFinite(converted) ? converted : null;
+    }
+
     normalizeSale = (s) => {
+        const quantity = this.toNumber(this.pickField(s, ['quantity', 'qty'])) ?? 0;
+        const price = this.toNumber(this.pickField(s, ['price', 'unitPrice', 'unit_price'])) ?? 0;
+        const total = this.toNumber(this.pickField(s, ['total', 'amount'])) ?? (quantity * price);
+        const inventoryItemId = this.toNumber(this.pickField(s, ['inventoryItemId', 'inventory_item_id']));
+
         return {
-            date: s.date,
-            item: s.item,
-            quantity: Number(s.quantity) || 0,
-            price: Number(s.price) || 0,
-            total: s.total !== undefined ? Number(s.total) : (Number(s.quantity) || 0) * (Number(s.price) || 0)
+            date: this.pickField(s, ['date', 'saleDate', 'sale_date']),
+            item: this.pickField(s, ['item', 'name', 'title']) || '',
+            quantity,
+            price,
+            total,
+            ...(inventoryItemId !== null ? { inventoryItemId: Math.trunc(inventoryItemId) } : {})
         };
     }
 
     normalizeExpense = (e) => {
+        const amount = this.toNumber(this.pickField(e, ['amount', 'total'])) ?? 0;
         return {
-            date: e.date,
-            category: e.category,
-            storeVendor: e.storeVendor,
-            description: e.description,
-            amount: Number(e.amount) || 0
+            date: this.pickField(e, ['date', 'expenseDate', 'expense_date']),
+            category: this.pickField(e, ['category']) || 'other',
+            storeVendor: this.pickField(e, ['storeVendor', 'store_vendor', 'vendor', 'store']) || 'Unknown',
+            description: this.pickField(e, ['description', 'note', 'notes']) || 'Imported expense',
+            amount
         };
     }
 
     normalizeInventoryItem = (i) => {
-        const currentStock = Number(i.currentStock) || 0;
-        const unitCost = Number(i.unitCost) || 0;
+        const currentStock = this.toNumber(this.pickField(i, ['currentStock', 'current_stock', 'stock', 'quantity'])) ?? 0;
+        const unitCost = this.toNumber(this.pickField(i, ['unitCost', 'unit_cost', 'cost', 'price'])) ?? 0;
+        const minStock = this.toNumber(this.pickField(i, ['minStock', 'min_stock', 'minimumStock'])) ?? 0;
+        const stockDate = this.pickField(i, ['stockDate', 'stock_date', 'date']) || new Date().toISOString().split('T')[0];
+        const totalValue = this.toNumber(this.pickField(i, ['totalValue', 'total_value']));
+
         return {
-            name: i.name,
-            category: i.category,
+            name: this.pickField(i, ['name', 'item', 'itemName', 'item_name']) || 'Imported Item',
+            category: this.pickField(i, ['category']) || 'other',
             currentStock,
-            minStock: Number(i.minStock) || 0,
+            minStock,
             unitCost,
-            totalValue: i.totalValue !== undefined ? Number(i.totalValue) : currentStock * unitCost
+            stockDate,
+            totalValue: totalValue !== null ? totalValue : currentStock * unitCost
         };
     }
 
